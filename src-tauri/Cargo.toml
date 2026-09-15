@@ -37,7 +37,7 @@ ureq = "2"
 walkdir = "2"
 # OpenClaw Gateway 任务连接器：同步 WebSocket 客户端（握手/分帧/ping-pong 自带），
 # Ed25519 设备签名复用 rustls 已选的 ring provider，不引入异步运行时。
-tungstenite = { version = "0.24", default-features = false }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

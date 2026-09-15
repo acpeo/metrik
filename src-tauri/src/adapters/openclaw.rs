@@ -57,38 +57,33 @@ struct TranscriptMessage {
     usage: Option<TranscriptUsage>,
 }
 
+/// 计量字段按本机真实转录核实为 camelCase（cacheRead / cacheWrite /
+/// reasoningTokens / totalTokens）；不做无据兼容。
 #[derive(Deserialize)]
 struct TranscriptUsage {
     #[serde(default)]
     input: Option<i64>,
     #[serde(default)]
     output: Option<i64>,
-    #[serde(default)]
+    #[serde(default, rename = "cacheRead")]
     cache_read: Option<i64>,
     #[serde(default, rename = "cacheWrite")]
     cache_write: Option<i64>,
-    #[serde(default)]
-    cacheRead: Option<i64>,
-    #[serde(default)]
-    reasoning_tokens: Option<i64>,
     #[serde(default, rename = "reasoningTokens")]
-    reasoning_tokens_camel: Option<i64>,
+    reasoning_tokens: Option<i64>,
     #[serde(default, rename = "totalTokens")]
     total_tokens: Option<i64>,
 }
 
 impl TranscriptUsage {
     fn cache_read_value(&self) -> i64 {
-        self.cache_read.or(self.cacheRead).unwrap_or(0).max(0)
+        self.cache_read.unwrap_or(0).max(0)
     }
     fn cache_write_value(&self) -> i64 {
         self.cache_write.unwrap_or(0).max(0)
     }
     fn reasoning_value(&self) -> i64 {
-        self.reasoning_tokens
-            .or(self.reasoning_tokens_camel)
-            .unwrap_or(0)
-            .max(0)
+        self.reasoning_tokens.unwrap_or(0).max(0)
     }
 }
 
