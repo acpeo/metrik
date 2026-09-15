@@ -849,7 +849,7 @@ fn gateway_task_list(
     status: Option<String>,
     limit: Option<u32>,
     state: State<'_, AppState>,
-) -> Result<Vec<GatewayTaskView>, String> {
+) -> Result<Vec<gateway_tasks::GatewayTaskRow>, String> {
     let database_path = state.database_path.clone();
     let connection = storage::open_database_read_only(&database_path)
         .map_err(|error| error.to_string())?;
