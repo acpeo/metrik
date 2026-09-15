@@ -279,7 +279,6 @@ fn sign_payload_v3(
 struct GatewayClient {
     socket: tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
     next_id: u32,
-    deadline: Instant,
 }
 
 impl GatewayClient {
@@ -372,7 +371,6 @@ impl GatewayClient {
         Ok(Self {
             socket,
             next_id: 1,
-            deadline: start + HANDSHAKE_TIMEOUT + RPC_TIMEOUT,
         })
     }
 
