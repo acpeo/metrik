@@ -490,8 +490,6 @@ impl GatewayClient {
             bail!("rpc {method} failed: {message}");
         }
     }
-        }
-    }
 }
 
 impl Drop for GatewayClient {
