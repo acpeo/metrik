@@ -144,7 +144,7 @@ impl AgentAdapter for OpenclawAdapter {
             .and_then(|name| name.to_str())
             .unwrap_or("unknown-session")
             .to_owned();
-        let mut session_id = fallback_session.clone();
+        let session_id = fallback_session.clone();
         let mut project_path: Option<String> = None;
 
         let mut diagnostics = ScanDiagnostics::default();

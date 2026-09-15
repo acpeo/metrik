@@ -364,7 +364,7 @@ impl GatewayClient {
             .unwrap_or_default();
         if !scopes.iter().any(|scope| scope == "operator.read") {
             bail!(
-                "gateway granted scopes [{scopes}] without operator.read; \
+                "gateway granted scopes [{scopes:?}] without operator.read; \
                  approve this device once via `openclaw devices approve`"
             );
         }
