@@ -166,7 +166,7 @@ fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
     // 通用：在 DER 里找 Ed25519 OID 1.3.101.112（06 03 2b 65 70），其后
     // 04 20 <32 bytes> 就是 BIT/OCTET STRING 包裹的公钥。
     for i in 0..der.len().saturating_sub(5) {
-        if &der[i..i + 5] == [0x06, 0x03, 0x2b, 0x65, 0x70] {
+        if der[i..i + 5] == [0x06, 0x03, 0x2b, 0x65, 0x70] {
             // OID 后紧跟 04 20 <32B> 或 BIT STRING 形态 03 42 00 <32B>
             if i + 5 + 2 + 32 <= der.len() && der[i + 5] == 0x04 && der[i + 6] == 0x20 {
                 return Ok(der[i + 7..i + 7 + 32].to_vec());
