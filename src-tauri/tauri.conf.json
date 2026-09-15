@@ -1,0 +1,76 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Metrik",
+  "version": "0.19.7",
+  "identifier": "app.metrik.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "beforeBundleCommand": "node scripts/prepare-macos-widget.mjs",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "title": "Metrik",
+        "width": 320,
+        "height": 320,
+        "minWidth": 320,
+        "minHeight": 320,
+        "resizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": true,
+        "preventOverflow": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data: blob: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:",
+      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMxMDE1MzcxOTAyOEE1OEMKUldTTXBTaVFjVk1CTWJjMHZYY01vbDNsMlAveFYwZU9Gem9ZbmlEbmRTSmxabzYxcEplamtKbS8K",
+      "endpoints": [
+        "https://github.com/keros68/metrik/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Accurate, local-first AI agent usage monitoring",
+    "publisher": "keros68",
+    "copyright": "Copyright © 2026 keros68",
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": "-",
+      "entitlements": "entitlements.macOS.plist",
+      "files": {
+        "PlugIns/MetrikWidget.appex": "../.build/macos-widget-extension/MetrikWidget.appex",
+        "Helpers/metrik-widget-publish": "../.build/macos-widget-extension/Helpers/metrik-widget-publish",
+        "Helpers/metrik-widget-reload": "../.build/macos-widget-extension/Helpers/metrik-widget-reload"
+      }
+    }
+  }
+}

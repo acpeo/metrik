@@ -1,0 +1,38 @@
+{
+  "name": "metrik",
+  "version": "0.19.7",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "node --test src/platformDetection.test.js src/windowGeometry.test.js src/windowClient.test.js src/glassAppearance.test.js src/quotaWindows.test.js src/macosWidgetBundle.test.js src/trayBadge.test.js src/modelNames.test.js",
+    "preview": "vite preview",
+    "pricing:update": "node --use-env-proxy scripts/update-pricing.mjs",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:widget-preview": "zsh scripts/build-macos-widget-preview.sh"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "^5.2.9",
+    "@fontsource/instrument-serif": "^5.2.8",
+    "@fontsource/newsreader": "5.2.10",
+    "@phosphor-icons/react": "^2.1.10",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-os": "^2.3.2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@vitejs/plugin-react": "5.0.4",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "uplot": "1.6.32",
+    "vite": "6.4.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

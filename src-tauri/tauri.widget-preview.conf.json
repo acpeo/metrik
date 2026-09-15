@@ -1,0 +1,8 @@
+{
+  "productName": "Metrik Widget Preview",
+  "identifier": "app.metrik.desktop.widget-preview",
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "targets": ["app"]
+  }
+}

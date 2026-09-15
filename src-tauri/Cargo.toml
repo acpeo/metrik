@@ -1,0 +1,106 @@
+[package]
+name = "metrik"
+version = "0.19.7"
+description = "Local-first AI agent usage monitor"
+authors = ["keros68 <keros68@gmail.com>"]
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[lib]
+name = "metrik_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
+# 明确只用 ring provider：默认同时启用 ring 与 aws-lc-rs 时，rustls 0.23
+# 无法自动确定 CryptoProvider 会 panic（antigravity 自签 TLS 首次真机命中）。
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-os = "2.3.2"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = "2.10.1"
+ureq = "2"
+walkdir = "2"
+# OpenClaw Gateway 任务连接器：同步 WebSocket 客户端（握手/分帧/ping-pong 自带），
+# Ed25519 设备签名复用 rustls 已选的 ring provider，不引入异步运行时。
+tungstenite = { version = "0.24", default-features = false }
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[target.'cfg(unix)'.dependencies]
+# 原生 statusLine：委托超时后按进程组终止（killpg），和 Windows 的进程树终止对齐。
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# 置顶悬停监视、透明度和输入穿透都在 GTK 主上下文执行，避免
+# 跨线程同时调用 GDK/X11 导致本地堆损坏。XQueryPointer 使用独立
+# display 连接，避免破坏 GDK 的 error-trap 序列，并保留 HiDPI/多显示器物理坐标精度。
+gtk = "0.18"
+gdkx11 = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# 菜单栏面板：把 main 窗口换成不抢焦点的 NSPanel。crates.io 上没有 Tauri 2 版本，
+# 只能走 git 分支；上游停更时需要自行维护。
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
+# Tauri 暴露底层 NSStatusItem。macOS 26 会为每个 status item 保留一个由
+# ControlCenter 托管的外层槽，即使 length=0 也仍留下间距；因此菜单栏只创建一个
+# 原生 item，并在它的 button.attributedTitle 中组合所有 Agent 图标和额度。
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "NSAttributedString",
+  "NSButton",
+  "NSCell",
+  "NSColor",
+  "NSFont",
+  "NSImage",
+  "NSResponder",
+  "NSStatusBarButton",
+  "NSStatusItem",
+  "NSTextAttachment",
+  "NSView",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "NSAttributedString",
+  "NSData",
+  "NSDictionary",
+  "NSGeometry",
+  "NSObject",
+  "NSRange",
+  "NSString",
+] }
+# 直接设置窗口级 NSAppearance（tao 的 set_theme 只动全应用外观，macOS 26 的
+# 标题栏不跟随它）。cocoa/objc 随 tauri-nspanel 已在依赖树中。
+objc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# 只剩任务栏进度按钮用得到。WinRT 合成那几个 feature 和 windows-numerics 是
+# HostBackdrop 留下的，随它一起删了。
+windows = { version = "0.61.3", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_System_Com",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

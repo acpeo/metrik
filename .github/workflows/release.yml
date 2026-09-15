@@ -1,0 +1,123 @@
+name: Release
+
+# 推送 v* 标签时构建安装包并发布草稿 Release，由维护者确认后发布。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+            widget-archs: ""
+            updater-json: "true"
+          # Intel + Apple Silicon 通用包。macOS 尚未实机验收，Release 说明里
+          # 必须标明这一点。
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            widget-archs: "arm64 x86_64"
+            updater-json: "true"
+          # Linux 发布基线与 CI 一致：Ubuntu 24.04 x86_64，只发 deb 与 AppImage。
+          # Linux 安装包暂不走应用内更新（deb 由包管理器接管，AppImage 更新
+          # 未验收），不产出更新器工件，也不参与 latest.json。
+          - platform: ubuntu-24.04
+            args: >-
+              --bundles deb,appimage
+              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+            rust-targets: ""
+            widget-archs: ""
+            updater-json: "false"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # 不开 npm 缓存：它的 post 步骤会在 macOS 上失败，把已经构建成功、产物也传完
+      # 的 job 标红（0.3.0、0.4.0 各误报一次）。发布不频繁，不值得为这点缓存收益
+      # 换一个会骗人的红叉。setup-node v5+ 会在 package.json 含 packageManager 字段时
+      # 自动开缓存——本仓库没有该字段，所以升级后仍是零缓存，与原意图一致。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      # 发布不频繁，且通用构建的 target 布局会让缓存的路径校验在 post 步骤
+      # 报错、把已成功的构建标红。发布流程不缓存，换取稳定的绿。
+
+      # 与 ci.yml 的 Linux job 保持同一份依赖清单；改动时两边一起改。
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 安装包没有代码签名证书（Windows 会提示"未知发布者"，macOS 会提示
+      # 无法验证开发者），这是已知且在 README 声明的边界。下面这对密钥是
+      # Tauri 更新器自己的 minisign 签名，只保证更新包在分发链路上没被掉包。
+      # 同时会生成 latest.json（更新器的检查端点）并一并上传到 Release。
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          METRIK_WIDGET_ARCHS: ${{ matrix.widget-archs }}
+          # Ubuntu 24.04 镜像没有 FUSE，linuxdeploy 需解包运行（同 ci.yml）。
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Metrik ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: ${{ matrix.updater-json }}
+          args: ${{ matrix.args }}
+
+      - name: Verify WidgetKit extension is embedded
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app_path="$(find src-tauri/target -path '*/release/bundle/macos/Metrik.app' -type d -print -quit)"
+          test -n "$app_path"
+          test -x "$app_path/Contents/PlugIns/MetrikWidget.appex/Contents/MacOS/MetrikWidget"
+          test -x "$app_path/Contents/Helpers/metrik-widget-publish"
+          test -x "$app_path/Contents/Helpers/metrik-widget-reload"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Contents/PlugIns/MetrikWidget.appex/Contents/Info.plist")" = "app.metrik.desktop.widget"
+
+          host_info="$app_path/Contents/Info.plist"
+          widget_info="$app_path/Contents/PlugIns/MetrikWidget.appex/Contents/Info.plist"
+          host_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$host_info")"
+          widget_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$widget_info")"
+          host_release="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$host_info")"
+          widget_release="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$widget_info")"
+          test "$widget_build" = "$host_build"
+          test "$widget_release" = "$host_release"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+
+      # 打包步骤成功不代表两个分发格式都产出了；缺失时直接判红，避免
+      # Release 页只有其中一种包。
+      - name: Verify Linux packages were built
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          find src-tauri/target -path '*/release/bundle/deb/*.deb' | grep -q .
+          find src-tauri/target -path '*/release/bundle/appimage/*.AppImage' | grep -q .
