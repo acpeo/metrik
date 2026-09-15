@@ -137,7 +137,7 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
 
     Ok(DeviceIdentity {
         device_id: base64url(&public_raw),
-        private_key_der,
+        private_key_der: pkcs8_bytes.to_vec(),
         public_key_b64url: base64url(&public_raw),
     })
 }
