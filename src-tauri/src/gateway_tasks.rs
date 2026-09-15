@@ -141,26 +141,30 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
 /// 头 302e…04220420），也可能带 V3 扩展形态（长度字节不同）——不硬编码前缀，
 /// 改为按 ASN.1 定位 OCTET STRING，取其中 32 字节 Ed25519 公钥。
 fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
-    // 先试标准 48 字节 PKCS#8（ring generate_pkcs8 的输出）
-    const V1: &[u8] = &[
-        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22,
-        0x04, 0x20,
-    ];
-    if der.len() == V1.len() + 32 && der.starts_with(V1) {
-        return Ok(der[V1.len()..].to_vec());
+    // ring 0.17.14 按 ed25519_pkcs8_v2_template.der 组装（源码 src/pkcs8.rs wrap_key）：
+    // prefix(16B: 3051020101 300506032b6570 04220420) || seed(32B) ||
+    // middle(3B: 81 21 00，[1] IMPLICIT BIT STRING 头) || pubkey(32B)，总 83 字节。
+    // 公钥固定在 offset 51..83；布局不符时回退到 OID 扫描。
+    if der.len() == 83 && der[49] == 0x81 && der[50] == 0x21 && der[51] == 0x00 {
+        return Ok(der[52..84].to_vec());
     }
-    // 通用：在 DER 里找 Ed25519 OID 1.3.101.112（06 03 2b 65 70），其后
-    // 04 20 <32 bytes> 就是 BIT/OCTET STRING 包裹的公钥。
-    for i in 0..der.len().saturating_sub(5) {
-        if der[i..i + 5] == [0x06, 0x03, 0x2b, 0x65, 0x70] {
-            // OID 后紧跟 04 20 <32B> 或 BIT STRING 形态 03 42 00 <32B>
-            if i + 5 + 2 + 32 <= der.len() && der[i + 5] == 0x04 && der[i + 6] == 0x20 {
-                return Ok(der[i + 7..i + 7 + 32].to_vec());
-            }
-            if i + 5 + 3 + 32 <= der.len() && der[i + 5] == 0x03 && der[i + 6] == 0x42 {
-                return Ok(der[i + 8..i + 8 + 32].to_vec());
-            }
+    // 回退：按 Ed25519 OID 1.3.101.112 扫描，容忍 04 20 / 03 21 00 两种包裹
+    const OID: [u8; 3] = [0x2b, 0x65, 0x70];
+    let oid_pos = der
+        .windows(3)
+        .position(|window| window == OID)
+        .context("Ed25519 OID not found in private key DER")?;
+    let mut p = oid_pos + 3;
+    while p + 2 < der.len() {
+        let tag = der[p];
+        let len = der[p + 1] as usize;
+        if tag == 0x04 && len == 0x20 && p + 2 + 32 <= der.len() {
+            return Ok(der[p + 2..p + 2 + 32].to_vec());
         }
+        if tag == 0x03 && len == 0x21 && p + 3 + 32 <= der.len() && der[p + 2] == 0x00 {
+            return Ok(der[p + 3..p + 3 + 32].to_vec());
+        }
+        p += 2 + len;
     }
     bail!(
         "Ed25519 public key not found in private DER (len={})",
