@@ -151,22 +151,35 @@ fn spki_last32_b64url(private_key_pem: &str) -> Result<String> {
     Ok(base64url(&public_raw))
 }
 
-/// 从 PKCS#8 DER 提取 Ed25519 raw 公钥：固定头部 302e020100300506032b6570
-/// 04220420（16 字节）后即 32 字节 key。ring 0.17 的 public_key() 已私有化。
+/// 从 Ed25519 私钥 DER 提取 raw 公钥。DER 可能是 48 字节 PKCS#8（ring 生成，
+/// 头 302e…04220420），也可能带 V3 扩展形态（长度字节不同）——不硬编码前缀，
+/// 改为按 ASN.1 定位 OCTET STRING，取其中 32 字节 Ed25519 公钥。
 fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
-    const ED25519_PKCS8_PREFIX: &[u8] = &[
+    // 先试标准 48 字节 PKCS#8（ring generate_pkcs8 的输出）
+    const V1: &[u8] = &[
         0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22,
         0x04, 0x20,
     ];
-    if der.len() != ED25519_PKCS8_PREFIX.len() + 32
-        || !der.starts_with(ED25519_PKCS8_PREFIX)
-    {
-        bail!(
-            "unexpected Ed25519 PKCS#8 DER length/prefix (len={})",
-            der.len()
-        );
+    if der.len() == V1.len() + 32 && der.starts_with(V1) {
+        return Ok(der[V1.len()..].to_vec());
     }
-    Ok(der[ED25519_PKCS8_PREFIX.len()..].to_vec())
+    // 通用：在 DER 里找 Ed25519 OID 1.3.101.112（06 03 2b 65 70），其后
+    // 04 20 <32 bytes> 就是 BIT/OCTET STRING 包裹的公钥。
+    for i in 0..der.len().saturating_sub(5) {
+        if &der[i..i + 5] == [0x06, 0x03, 0x2b, 0x65, 0x70] {
+            // OID 后紧跟 04 20 <32B> 或 BIT STRING 形态 03 42 00 <32B>
+            if i + 5 + 2 + 32 <= der.len() && der[i + 5] == 0x04 && der[i + 6] == 0x20 {
+                return Ok(der[i + 7..i + 7 + 32].to_vec());
+            }
+            if i + 5 + 3 + 32 <= der.len() && der[i + 5] == 0x03 && der[i + 6] == 0x42 {
+                return Ok(der[i + 8..i + 8 + 32].to_vec());
+            }
+        }
+    }
+    bail!(
+        "Ed25519 public key not found in private DER (len={})",
+        der.len()
+    );
 }
 
 fn load_key_pair(private_key_pem: &str) -> Result<ring::signature::Ed25519KeyPair> {
