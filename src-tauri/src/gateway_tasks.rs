@@ -145,8 +145,8 @@ fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
     // prefix(16B: 3051020101 300506032b6570 04220420) || seed(32B) ||
     // middle(3B: 81 21 00，[1] IMPLICIT BIT STRING 头) || pubkey(32B)，总 83 字节。
     // 公钥固定在 offset 51..83；布局不符时回退到 OID 扫描。
-    if der.len() == 83 && der[49] == 0x81 && der[50] == 0x21 && der[51] == 0x00 {
-        return Ok(der[52..84].to_vec());
+    if der.len() == 83 && der[48] == 0x81 && der[49] == 0x21 && der[50] == 0x00 {
+        return Ok(der[51..83].to_vec());
     }
     // 回退：按 Ed25519 OID 1.3.101.112 扫描，容忍 04 20 / 03 21 00 两种包裹
     const OID: [u8; 3] = [0x2b, 0x65, 0x70];
