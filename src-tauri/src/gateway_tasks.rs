@@ -57,7 +57,8 @@ pub struct GatewayTarget {
 #[derive(Clone, Debug)]
 struct DeviceIdentity {
     device_id: String,
-    private_key_pem: String,
+    /// PKCS#8 DER：签名与公钥提取的直接来源（绕开 PEM 文本解析）。
+    private_key_der: Vec<u8>,
     public_key_b64url: String,
 }
 
@@ -91,21 +92,22 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
             .and_then(Value::as_str)
             .context("device.json missing deviceId")?
             .to_owned();
-        let private_key_pem = value
-            .get("privateKeyPem")
+        let der_b64 = value
+            .get("privateKeyDerB64")
             .and_then(Value::as_str)
-            .context("device.json missing privateKeyPem")?
-            .to_owned();
-        let public_key_b64url = spki_last32_b64url(&private_key_pem)?;
+            .context("device.json missing privateKeyDerB64")?;
+        let private_key_der = base64_decode(der_b64)
+            .context("device.json privateKeyDerB64 is not valid base64")?;
+        let public_raw = ed25519_public_from_pkcs8(&private_key_der)?;
         return Ok(DeviceIdentity {
-            device_id,
-            private_key_pem,
-            public_key_b64url,
+            device_id: base64url(&public_raw),
+            private_key_der,
+            public_key_b64url: base64url(&public_raw),
         });
     }
 
     // 生成新身份（Ed25519 PKCS#8 PEM）。OpenClaw 的 device.json 用同构格式
-    // （version / deviceId / publicKeyPem / privateKeyPem / createdAtMs）。
+    // （version / deviceId / privateKeyDerB64 / createdAtMs），公钥/ID 从 DER 提取。
     // ring 0.17：generate_pkcs8 返回 Result<Document, Unspecified>，错误类型
     // 不实现 std::error::Error，不能 .context()，只能 map_err 转 anyhow。
     let rng = ring::rand::SystemRandom::new();
@@ -119,8 +121,6 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     // （Ed25519 PKCS#8 固定 16 字节头 + 32 字节 key，总长 48）。
     let public_raw = ed25519_public_from_pkcs8(pkcs8_bytes)?;
 
-    let private_pem = ed25519_pkcs8_pem(pkcs8_bytes);
-    let public_pem = ed25519_spki_pem(&public_raw);
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
@@ -129,8 +129,7 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     let store = json!({
         "version": 1,
         "deviceId": base64url(&public_raw),
-        "publicKeyPem": public_pem,
-        "privateKeyPem": private_pem,
+        "privateKeyDerB64": base64url(pkcs8_bytes),
         "createdAtMs": created,
     });
     std::fs::write(&path, serde_json::to_string_pretty(&store)?)
@@ -138,17 +137,9 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
 
     Ok(DeviceIdentity {
         device_id: base64url(&public_raw),
-        private_key_pem: private_pem,
+        private_key_der,
         public_key_b64url: base64url(&public_raw),
     })
-}
-
-/// OpenClaw 网关校验的是 SPKI DER 的**最后 32 字节**（Ed25519 raw public key）
-/// 的 base64url 形态（本机配对记录实测）。
-fn spki_last32_b64url(private_key_pem: &str) -> Result<String> {
-    let der = pem_to_der(private_key_pem).context("bad Ed25519 PEM")?;
-    let public_raw = ed25519_public_from_pkcs8(&der)?;
-    Ok(base64url(&public_raw))
 }
 
 /// 从 Ed25519 私钥 DER 提取 raw 公钥。DER 可能是 48 字节 PKCS#8（ring 生成，
@@ -182,22 +173,6 @@ fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
     );
 }
 
-fn load_key_pair(private_key_pem: &str) -> Result<ring::signature::Ed25519KeyPair> {
-    let der = pem_to_der(private_key_pem).context("bad Ed25519 PEM")?;
-    ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der)
-        .map_err(|error| anyhow!("bad Ed25519 PKCS#8 key: {error}"))
-}
-
-fn pem_to_der(pem: &str) -> Option<Vec<u8>> {
-    let body: String = pem
-        .lines()
-        .filter(|line| !line.contains("-----"))
-        .collect::<Vec<_>>()
-        .join("");
-    let body: String = body.chars().filter(|c| !c.is_whitespace()).collect();
-    base64_decode(&body)
-}
-
 fn base64_decode(text: &str) -> Option<Vec<u8>> {
     const REV: fn(u8) -> Option<u8> = |c: u8| match c {
         b'A'..=b'Z' => Some(c - b'A'),
@@ -229,55 +204,6 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// PKCS#8 Ed25519 → PEM（OpenClaw device.json 同构格式）。
-fn ed25519_pkcs8_pem(der: &[u8]) -> String {
-    let mut pem = String::from("-----BEGIN PRIVATE KEY-----\n");
-    pem.push_str(&wrap64(&base64_encode(der)));
-    pem.push_str("\n-----END PRIVATE KEY-----\n");
-    pem
-}
-
-/// Raw Ed25519 public key → SPKI PEM。
-fn ed25519_spki_pem(raw_public: &[u8]) -> String {
-    // SPKI DER: 302a300506032b6570032100 || raw(32)
-    let mut der = vec![0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00];
-    der.extend_from_slice(raw_public);
-    let mut pem = String::from("-----BEGIN PUBLIC KEY-----\n");
-    pem.push_str(&wrap64(&base64_encode(&der)));
-    pem.push_str("\n-----END PUBLIC KEY-----\n");
-    pem
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
-        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-        out.push(TABLE[(n >> 18) as usize & 63] as char);
-        out.push(TABLE[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 {
-            TABLE[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            TABLE[n as usize & 63] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
-fn wrap64(text: &str) -> String {
-    text.as_bytes()
-        .chunks(64)
-        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// 握手签名参数：v3 载荷的非常量部分（clippy too_many_arguments 阈值 7）。
 struct SignContext<'a> {
     client_id: &'a str,
@@ -306,7 +232,8 @@ fn sign_payload_v3(identity: &DeviceIdentity, ctx: &SignContext) -> Result<Strin
         &ctx.device_family.to_ascii_lowercase(),
     ]
     .join("|");
-    let pair = load_key_pair(&identity.private_key_pem)?;
+    let pair = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&identity.private_key_der)
+        .map_err(|error| anyhow!("bad Ed25519 private key: {error}"))?;
     let sig = pair.sign(payload.as_bytes());
     Ok(base64url(sig.as_ref()))
 }
@@ -902,7 +829,8 @@ mod tests {
         assert_eq!(first.device_id.len(), 43, "Ed25519 raw pk base64url = 43 chars");
 
         // 签名可被公钥验证（用 ring 从 PEM 重建 keypair 自证）
-        let pair = load_key_pair(&first.private_key_pem).unwrap();
+        let pair = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&first.private_key_der)
+            .unwrap();
         let sig = pair.sign(b"payload");
         assert_eq!(sig.as_ref().len(), 64);
         let _ = std::fs::remove_dir_all(&dir);
