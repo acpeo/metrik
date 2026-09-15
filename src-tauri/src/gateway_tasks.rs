@@ -106,13 +106,18 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
 
     // 生成新身份（Ed25519 PKCS#8 PEM）。OpenClaw 的 device.json 用同构格式
     // （version / deviceId / publicKeyPem / privateKeyPem / createdAtMs）。
+    // ring 0.17：generate_pkcs8 返回 Result<Document, Unspecified>，错误类型
+    // 不实现 std::error::Error，不能 .context()，只能 map_err 转 anyhow。
     let rng = ring::rand::SystemRandom::new();
-    let pkcs8 =
-        ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).context("Ed25519 keygen failed")?;
+    let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng)
+        .map_err(|error| anyhow!("Ed25519 keygen failed: {error}"))?;
     let pkcs8_bytes = pkcs8.as_ref();
-    let key_pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8_bytes)
-        .context("generated key failed to load")?;
-    let public_raw = key_pair.public_key().as_ref();
+    // 自检：确保私钥可加载（不使用 keypair 对象本身，公钥从 DER 提取）。
+    ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8_bytes)
+        .map_err(|error| anyhow!("generated key failed to load: {error}"))?;
+    // ring 0.17：public_key() 已私有化，从 PKCS#8 DER 尾部取 raw 公钥
+    // （Ed25519 PKCS#8 固定 15 字节头 + 32 字节 key）。
+    let public_raw = ed25519_public_from_pkcs8(pkcs8_bytes)?;
 
     let private_pem = ed25519_pkcs8_pem(pkcs8_bytes);
     let public_pem = ed25519_spki_pem(public_raw);
@@ -141,14 +146,33 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
 /// OpenClaw 网关校验的是 SPKI DER 的**最后 32 字节**（Ed25519 raw public key）
 /// 的 base64url 形态（本机配对记录实测）。
 fn spki_last32_b64url(private_key_pem: &str) -> Result<String> {
-    let pair = load_key_pair(private_key_pem)?;
-    Ok(base64url(pair.public_key().as_ref()))
+    let der = pem_to_der(private_key_pem).context("bad Ed25519 PEM")?;
+    let public_raw = ed25519_public_from_pkcs8(&der)?;
+    Ok(base64url(&public_raw))
+}
+
+/// 从 PKCS#8 DER 提取 Ed25519 raw 公钥（固定前缀 302e020100300506032b657003
+/// 2100 后即 32 字节 key）。ring 0.17 的 Ed25519KeyPair::public_key 已私有化。
+fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
+    const ED25519_PKCS8_PREFIX: &[u8] = &[
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21,
+        0x00,
+    ];
+    if der.len() != ED25519_PKCS8_PREFIX.len() + 32
+        || !der.starts_with(ED25519_PKCS8_PREFIX)
+    {
+        bail!(
+            "unexpected Ed25519 PKCS#8 DER length/prefix (len={})",
+            der.len()
+        );
+    }
+    Ok(der[ED25519_PKCS8_PREFIX.len()..].to_vec())
 }
 
 fn load_key_pair(private_key_pem: &str) -> Result<ring::signature::Ed25519KeyPair> {
     let der = pem_to_der(private_key_pem).context("bad Ed25519 PEM")?;
     ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der)
-        .context("bad Ed25519 PKCS#8 key")
+        .map_err(|error| anyhow!("bad Ed25519 PKCS#8 key: {error}"))
 }
 
 fn pem_to_der(pem: &str) -> Option<Vec<u8>> {
