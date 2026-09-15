@@ -120,7 +120,7 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     let public_raw = ed25519_public_from_pkcs8(pkcs8_bytes)?;
 
     let private_pem = ed25519_pkcs8_pem(pkcs8_bytes);
-    let public_pem = ed25519_spki_pem(public_raw);
+    let public_pem = ed25519_spki_pem(&public_raw);
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
@@ -128,7 +128,7 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     let created = chrono::Utc::now().timestamp_millis();
     let store = json!({
         "version": 1,
-        "deviceId": base64url(public_raw),
+        "deviceId": base64url(&public_raw),
         "publicKeyPem": public_pem,
         "privateKeyPem": private_pem,
         "createdAtMs": created,
@@ -137,9 +137,9 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
         .with_context(|| format!("write {}", path.display()))?;
 
     Ok(DeviceIdentity {
-        device_id: base64url(public_raw),
+        device_id: base64url(&public_raw),
         private_key_pem: private_pem,
-        public_key_b64url: base64url(public_raw),
+        public_key_b64url: base64url(&public_raw),
     })
 }
 
