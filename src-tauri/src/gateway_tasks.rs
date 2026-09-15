@@ -823,11 +823,18 @@ mod tests {
         assert_eq!(first.device_id, second.device_id, "身份必须稳定复用");
         assert_eq!(first.device_id.len(), 43, "Ed25519 raw pk base64url = 43 chars");
 
-        // 签名可被公钥验证（用 ring 从 PEM 重建 keypair 自证）
+        // 一致性：DER 提取的公钥与 device_id 同源
+        let public_raw = ed25519_public_from_pkcs8(&first.private_key_der).unwrap();
+        assert_eq!(base64url(&public_raw), first.device_id);
+        // 密码学自证：从存储的 DER 重建 keypair 签名，用提取出的公钥验签——
+        // 提取错了（比如拿到私钥）这一步必然失败。
         let pair = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&first.private_key_der)
             .unwrap();
         let sig = pair.sign(b"payload");
         assert_eq!(sig.as_ref().len(), 64);
+        ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &public_raw)
+            .verify(b"payload", sig.as_ref())
+            .expect("extracted public key must verify the signature");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
