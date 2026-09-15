@@ -265,30 +265,32 @@ fn wrap64(text: &str) -> String {
         .join("\n")
 }
 
-fn sign_payload_v3(
-    identity: &DeviceIdentity,
-    client_id: &str,
-    client_mode: &str,
-    role: &str,
-    scopes: &[&str],
+/// 握手签名参数：v3 载荷的非常量部分（clippy too_many_arguments 阈值 7）。
+struct SignContext<'a> {
+    client_id: &'a str,
+    client_mode: &'a str,
+    role: &'a str,
+    scopes: &'a [&'a str],
     signed_at_ms: i64,
-    token: &str,
-    nonce: &str,
-    platform: &str,
-    device_family: &str,
-) -> Result<String> {
+    token: &'a str,
+    nonce: &'a str,
+    platform: &'a str,
+    device_family: &'a str,
+}
+
+fn sign_payload_v3(identity: &DeviceIdentity, ctx: &SignContext) -> Result<String> {
     let payload = [
         "v3",
         &identity.device_id,
-        client_id,
-        client_mode,
-        role,
-        &scopes.join(","),
-        &signed_at_ms.to_string(),
-        token,
-        nonce,
-        &platform.to_ascii_lowercase(),
-        &device_family.to_ascii_lowercase(),
+        ctx.client_id,
+        ctx.client_mode,
+        ctx.role,
+        &ctx.scopes.join(","),
+        &ctx.signed_at_ms.to_string(),
+        ctx.token,
+        ctx.nonce,
+        &ctx.platform.to_ascii_lowercase(),
+        &ctx.device_family.to_ascii_lowercase(),
     ]
     .join("|");
     let pair = load_key_pair(&identity.private_key_pem)?;
@@ -322,15 +324,17 @@ impl GatewayClient {
         let scopes = ["operator.read"];
         let signature = sign_payload_v3(
             identity,
-            "cli",
-            "cli",
-            "operator",
-            &scopes,
-            signed_at_ms,
-            &target.token,
-            &nonce,
-            "windows",
-            "",
+            &SignContext {
+                client_id: "cli",
+                client_mode: "cli",
+                role: "operator",
+                scopes: &scopes,
+                signed_at_ms,
+                token: &target.token,
+                nonce: &nonce,
+                platform: "windows",
+                device_family: "",
+            },
         )?;
 
         // 2) connect 握手（client.id/mode 必须在服务端白名单内）
@@ -474,22 +478,18 @@ impl GatewayClient {
             &mut self.socket,
             &json!({"type": "req", "id": request_id, "method": method, "params": params}),
         )?;
-        loop {
-            if start.elapsed() > RPC_TIMEOUT {
-                bail!("rpc {method} timed out");
-            }
-            match Self::wait_response(&mut self.socket, start, &request_id)? {
-                ref value if value.get("ok").and_then(Value::as_bool) == Some(true) => {
-                    return Ok(value.get("payload").cloned().unwrap_or(Value::Null));
-                }
-                value => {
-                    let message = value
-                        .pointer("/error/message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown gateway error");
-                    bail!("rpc {method} failed: {message}");
-                }
-            }
+        // wait_response 内部已循环等帧，这里单次取回即可。
+        let value = Self::wait_response(&mut self.socket, start, &request_id)?;
+        if value.get("ok").and_then(Value::as_bool) == Some(true) {
+            Ok(value.get("payload").cloned().unwrap_or(Value::Null))
+        } else {
+            let message = value
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown gateway error");
+            bail!("rpc {method} failed: {message}");
+        }
+    }
         }
     }
 }
