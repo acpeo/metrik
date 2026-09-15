@@ -62,7 +62,8 @@ struct DeviceIdentity {
 }
 
 fn base64url(data: &[u8]) -> String {
-    use std::fmt::Write;
+    // URL-safe 且无 padding：OpenClaw 的 deviceId 是 Ed25519 公钥
+    // （32 字节）的 43 字符 base64url，不带 '='。与本机实测配对记录一致。
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
@@ -70,18 +71,13 @@ fn base64url(data: &[u8]) -> String {
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(TABLE[(n >> 18) as usize & 63] as char);
         out.push(TABLE[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 {
-            TABLE[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            TABLE[n as usize & 63] as char
-        } else {
-            '='
-        });
+        if chunk.len() > 1 {
+            out.push(TABLE[(n >> 6) as usize & 63] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[n as usize & 63] as char);
+        }
     }
-    let _ = write!(out, "");
     out
 }
 
@@ -884,7 +880,11 @@ mod tests {
         for len in [0usize, 1, 2, 3, 4, 31, 32, 33, 64] {
             let data: Vec<u8> = (0..len as u8).collect();
             let encoded = base64url(&data);
+            assert!(!encoded.contains('='), "url-safe 无 padding");
             assert_eq!(base64_decode(&encoded).unwrap(), data, "len {len}");
         }
+        // deviceId 形态：Ed25519 公钥 32 字节 → 恰好 43 字符。
+        let pk = [7u8; 32];
+        assert_eq!(base64url(&pk).len(), 43);
     }
 }
