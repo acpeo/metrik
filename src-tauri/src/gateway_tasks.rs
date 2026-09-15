@@ -116,7 +116,7 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8_bytes)
         .map_err(|error| anyhow!("generated key failed to load: {error}"))?;
     // ring 0.17：public_key() 已私有化，从 PKCS#8 DER 尾部取 raw 公钥
-    // （Ed25519 PKCS#8 固定 15 字节头 + 32 字节 key）。
+    // （Ed25519 PKCS#8 固定 16 字节头 + 32 字节 key，总长 48）。
     let public_raw = ed25519_public_from_pkcs8(pkcs8_bytes)?;
 
     let private_pem = ed25519_pkcs8_pem(pkcs8_bytes);
@@ -151,12 +151,12 @@ fn spki_last32_b64url(private_key_pem: &str) -> Result<String> {
     Ok(base64url(&public_raw))
 }
 
-/// 从 PKCS#8 DER 提取 Ed25519 raw 公钥（固定前缀 302e020100300506032b657003
-/// 2100 后即 32 字节 key）。ring 0.17 的 Ed25519KeyPair::public_key 已私有化。
+/// 从 PKCS#8 DER 提取 Ed25519 raw 公钥：固定头部 302e020100300506032b6570
+/// 04220420（16 字节）后即 32 字节 key。ring 0.17 的 public_key() 已私有化。
 fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
     const ED25519_PKCS8_PREFIX: &[u8] = &[
-        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21,
-        0x00,
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22,
+        0x04, 0x20,
     ];
     if der.len() != ED25519_PKCS8_PREFIX.len() + 32
         || !der.starts_with(ED25519_PKCS8_PREFIX)
