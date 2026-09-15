@@ -87,11 +87,6 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     if path.exists() {
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)
             .context("device.json is not valid JSON")?;
-        let device_id = value
-            .get("deviceId")
-            .and_then(Value::as_str)
-            .context("device.json missing deviceId")?
-            .to_owned();
         let der_b64 = value
             .get("privateKeyDerB64")
             .and_then(Value::as_str)
