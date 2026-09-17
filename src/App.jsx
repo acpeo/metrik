@@ -49,7 +49,7 @@ import qwenAppIcon from "./assets/qwen-app-icon.png";
 import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
-import { isTauriRuntime, loadGatewayConfig, loadGatewayTasks, refreshGatewayTasks, saveGatewayConfig } from "./taskClient.js";
+import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, refreshGatewayTasks, saveGatewayConfig } from "./taskClient.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -4574,6 +4574,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
   const [feedback, setFeedback] = useState(null);
   const [lastSync, setLastSync] = useState(null);
   const [live, setLive] = useState(false);
+  const [agentsSnap, setAgentsSnap] = useState(null);
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -4609,6 +4610,11 @@ function TasksSection({ gateways, onGatewaysChanged }) {
         }
       } else if (!gateways.length) {
         setLive(false);
+      }
+      if (gateways.length) {
+        loadAgentsSnapshot(gateways)
+          .then((snap) => alive && setAgentsSnap(snap))
+          .catch(() => {});
       }
       load(filter);
     };
@@ -4739,15 +4745,52 @@ function TasksSection({ gateways, onGatewaysChanged }) {
       )}
       {data?.loadError && <p className="tasks-feedback tasks-feedback--error">{data.loadError}</p>}
 
-      {tasks.length === 0 ? (
+      {agentsSnap?.agents?.length > 0 && (
+        <div className="agent-grid">
+          <div className="agent-grid-title">Agent 会话活动</div>
+          <div className="agent-cards">
+            {agentsSnap.agents.map((agent) => {
+              const lastSeen = Number.isFinite(agent.lastActiveMs) ? agent.lastActiveMs : 0;
+              const stale = agent.active && now - lastSeen > STALE_MS;
+              const shortId = agent.agentId.includes(":")
+                ? agent.agentId.slice(agent.agentId.indexOf(":") + 1)
+                : agent.agentId;
+              return (
+                <div
+                  key={agent.agentId}
+                  className={
+                    agent.active
+                      ? stale
+                        ? "agent-card agent-card--stale"
+                        : "agent-card agent-card--active"
+                      : "agent-card"
+                  }
+                >
+                  <div className="agent-card-head">
+                    <span className="agent-status-dot" />
+                    <strong>{agent.name || shortId}</strong>
+                  </div>
+                  <div className="agent-card-meta">
+                    <span>{shortId}</span>
+                    {agent.runningTasks > 0 && <span>{agent.runningTasks} 个活动会话</span>}
+                    {lastSeen > 0 && <span>活动 {formatTaskAge(lastSeen)}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {tasks.length === 0 && !agentsSnap?.agents?.some((agent) => agent.active) ? (
         <div className="tasks-empty">
           <ListChecks size={30} weight="light" />
           <p>
-            还没有任务记录。派一个 subagent 任务（例如让主 Agent 拆分子任务），
+            还没有任务记录，也没有活跃的 Agent 会话。派一个 subagent 任务，
             几秒内这里就会出现"运行中"条目。本机 Gateway 已配置时无需手动操作。
           </p>
         </div>
-      ) : (
+      ) : tasks.length > 0 ? (
         <div className="task-list">
           {tasks.map((task) => {
             const isActive = task.status === "running" || task.status === "queued";
@@ -4777,7 +4820,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
           })}
           {state.filter !== "all" && <p className="tasks-empty">当前筛选下暂无任务。</p>}
         </div>
-      )}
+      ) : null}
     </main>
   );
 }

@@ -118,6 +118,40 @@ export async function refreshGatewayTasks(gateways) {
 
 /// 设置存取：被追踪的 Gateway 列表（含 token）。token 只存本机 localStorage
 /// （与 Control UI 同级的安全边界；不上传、不进账本）。
+/// 读 Agent 会话活动快照（北斗等星位实时状态）：后端拉 sessions.list +
+/// agents.list 并按 agent 归集。Tauri 下走真实命令；浏览器走演示数据。
+export async function loadAgentsSnapshot(gateways) {
+  if (!isTauriRuntime()) {
+    const now = Date.now();
+    const stars = [
+      { id: "tianshu", name: "天枢" },
+      { id: "tianxuan", name: "天璇" },
+      { id: "tianji", name: "天玑" },
+      { id: "tianquan", name: "天权" },
+      { id: "yuheng", name: "玉衡" },
+      { id: "kaiyang", name: "开阳" },
+      { id: "yaoguang", name: "摇光" },
+    ];
+    return {
+      demo: true,
+      agents: stars.map((star, index) => ({
+        agentId: `VPS-北斗:${star.id}`,
+        name: star.name,
+        active: index < 3,
+        lastActiveMs: now - (index < 3 ? index * 4000 : 40 * 60_000),
+        sessionCount: index < 3 ? 1 : 0,
+        runningTasks: index < 3 ? 1 : 0,
+      })),
+    };
+  }
+  try {
+    const agents = await invoke("gateway_agents_snapshot", { gateways });
+    return { demo: false, agents };
+  } catch (error) {
+    return { demo: false, agents: [], loadError: String(error) };
+  }
+}
+
 const GATEWAYS_KEY = "metrik:gateways";
 
 export function loadGatewayConfig() {

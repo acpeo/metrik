@@ -509,6 +509,107 @@ pub struct GatewayTask {
 }
 
 /// 一次拉取的结果：全部快照任务 + 观测时间。
+/// 单个 Agent 的活动快照（从 Gateway agents.list / sessions.list 提取）。
+#[derive(Clone, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActivity {
+    pub agent_id: String,
+    pub name: Option<String>,
+    /// 该 Agent 当前是否被认为"活跃"（有未结束会话或近 N 秒有活动）。
+    pub active: bool,
+    /// 最后活动时间（ms）。来源视网关返回而定：会话 updated_at / lastActivity。
+    pub last_active_ms: Option<i64>,
+    /// 活跃会话数。
+    pub session_count: i64,
+    /// 当前运行中任务数（tasks.list 里该 agent 的 running/queued）。
+    pub running_tasks: i64,
+}
+
+pub struct AgentsSnapshot {
+    pub collected_at_ms: i64,
+    pub agents: Vec<AgentActivity>,
+}
+
+/// 拉 Agent 活动快照。
+/// 主数据源 = sessions.list（实测返回每个会话的 key/status/hasActiveRun/
+/// updatedAt/tokens，key 形如 agent:<agentId>[:subagent:<uuid>]）；辅以
+/// agents.list 补全 Agent 显示名。会话按 agentId 前缀归集成各 Agent 活动卡。
+pub fn fetch_agents_snapshot(target: &GatewayTarget) -> Result<AgentsSnapshot> {
+    let identity_dir = match &target.identity_dir {
+        Some(dir) => dir.clone(),
+        None => default_state_dir(),
+    };
+    let identity = load_or_create_identity(&identity_dir)?;
+    let mut client = GatewayClient::connect(target, &identity)?;
+
+    let sessions_payload = client.call("sessions.list", json!({}))?;
+    let agents_payload = client.call("agents.list", json!({}))?;
+
+    let mut agents: Vec<AgentActivity> = agents_payload
+        .pointer("/agents")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| AgentActivity {
+                    agent_id: value
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                    name: value
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    active: false,
+                    last_active_ms: None,
+                    session_count: 0,
+                    running_tasks: 0,
+                })
+                .filter(|agent| !agent.agent_id.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    // 会话归集：key 形如 agent:<agentId>[:subagent:...]。主会话与 subagent
+    // 会话都计入所属 Agent 的活动。
+    if let Some(sessions) = sessions_payload.get("sessions").and_then(Value::as_array) {
+        for session in sessions {
+            let key = session.get("key").and_then(Value::as_str).unwrap_or("");
+            let Some(agent_id) = key.strip_prefix("agent:") else {
+                continue;
+            };
+            let agent_id = agent_id.split(':').next().unwrap_or("");
+            if agent_id.is_empty() {
+                continue;
+            }
+            let Some(agent) = agents.iter_mut().find(|agent| agent.agent_id == agent_id) else {
+                continue;
+            };
+            agent.session_count += 1;
+            if let Some(updated) = session.get("updatedAt").and_then(Value::as_i64) {
+                if agent.last_active_ms.map(|current| updated > current).unwrap_or(true) {
+                    agent.last_active_ms = Some(updated);
+                }
+            }
+            let has_active_run = session
+                .get("hasActiveRun")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let status_running = session.get("status").and_then(Value::as_str) == Some("running");
+            if has_active_run || status_running {
+                agent.running_tasks += 1;
+                agent.active = true;
+            }
+        }
+    }
+
+    Ok(AgentsSnapshot {
+        collected_at_ms: chrono::Utc::now().timestamp_millis(),
+        agents,
+    })
+}
+
 pub struct TasksSnapshot {
     pub collected_at_ms: i64,
     pub tasks: Vec<GatewayTask>,

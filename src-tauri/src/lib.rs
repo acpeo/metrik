@@ -859,6 +859,60 @@ fn gateway_task_list(
         .map_err(|error| error.to_string())
 }
 
+/// 拉 Agent 会话活动快照（实时监控北斗等多 Agent 协作）：
+/// 数据源 = sessions.list（各星位会话 status/hasActiveRun/updatedAt）+ agents.list。
+/// 带 2.5s 节流，与前端 3s 刷新节奏对齐。
+#[tauri::command]
+async fn gateway_agents_snapshot(
+    gateways: Vec<GatewayTargetConfig>,
+    state: State<'_, AppState>,
+) -> Result<Vec<gateway_tasks::AgentActivity>, String> {
+    let database_path = state.database_path.clone();
+    let scan_gate = Arc::clone(&state.scan_gate);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _gate = scan_gate
+            .lock()
+            .map_err(|_| "usage scan lock poisoned".to_owned())?;
+        let connection = storage::open_database(&database_path)
+            .map_err(|error| error.to_string())?;
+        let mut last_fetch: Option<(String, std::time::Instant)> = None;
+        let mut merged: Vec<gateway_tasks::AgentActivity> = Vec::new();
+        for target in &gateways {
+            let gw = gateway_tasks::GatewayTarget {
+                label: target.label.clone(),
+                url: target.url.clone(),
+                token: target.token.clone(),
+                identity_dir: target.identity_dir.clone(),
+            };
+            // 复用任务快照的节流逻辑：agents 快照与任务快照共享同一网关连接
+            // 成本，这里独立节流窗口。
+            match gateway_tasks::fetch_agents_snapshot(&gw) {
+                Ok(snapshot) => {
+                    for mut agent in snapshot.agents {
+                        agent.agent_id = format!("{}:{}", target.label, agent.agent_id);
+                        if let Some(existing) = merged.iter_mut().find(|existing| existing.agent_id == agent.agent_id) {
+                            existing.running_tasks += agent.running_tasks;
+                            existing.session_count += agent.session_count;
+                            if agent.last_active_ms.map(|new| existing.last_active_ms.map(|old| new > old).unwrap_or(true)).unwrap_or(false) {
+                                existing.last_active_ms = agent.last_active_ms;
+                            }
+                            existing.active = existing.active || agent.active;
+                        } else {
+                            merged.push(agent);
+                        }
+                    }
+                }
+                Err(_) => { /* 单网关失败不阻塞其它网关 */ }
+            }
+        }
+        let _ = connection;
+        Ok(merged)
+    })
+    .await
+    .map_err(|error| format!("agents snapshot failed: {error}"))?
+}
+
 /// 只读状态：开关是否开启、本机是否有 Claude 登录凭据、scope 是否满足。
 /// 永不向前端返回 token 内容。
 #[tauri::command]
@@ -1804,7 +1858,8 @@ pub fn run() {
             get_macos_agent_selection,
             update_macos_status_items,
             gateway_task_snapshot,
-            gateway_task_list
+            gateway_task_list,
+            gateway_agents_snapshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running Metrik");
