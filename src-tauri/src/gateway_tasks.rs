@@ -148,7 +148,9 @@ fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
     if der.len() == 83 && der[48] == 0x81 && der[49] == 0x21 && der[50] == 0x00 {
         return Ok(der[51..83].to_vec());
     }
-    // 回退：按 Ed25519 OID 1.3.101.112 扫描，容忍 04 20 / 03 21 00 两种包裹
+    // 回退：按 Ed25519 OID 1.3.101.112 扫描，兼容三种包裹形态：
+    // v2 快路径已处理 83B；此处覆盖 v1 48B（04 22 → 内层 04 20 → key）
+    // 与裸 OCTET STRING（04 20 → key）。
     const OID: [u8; 3] = [0x2b, 0x65, 0x70];
     let oid_pos = der
         .windows(3)
@@ -158,11 +160,23 @@ fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
     while p + 2 < der.len() {
         let tag = der[p];
         let len = der[p + 1] as usize;
-        if tag == 0x04 && len == 0x20 && p + 2 + 32 <= der.len() {
-            return Ok(der[p + 2..p + 2 + 32].to_vec());
+        let content = p + 2;
+        if tag == 0x04 {
+            // 直接 32 字节裸公钥
+            if len == 0x20 && content + 32 <= der.len() {
+                return Ok(der[content..content + 32].to_vec());
+            }
+            // v1 嵌套：OCTET STRING 内容本身是 04 20 <32B>
+            if len == 0x22
+                && content + 34 <= der.len()
+                && der[content] == 0x04
+                && der[content + 1] == 0x20
+            {
+                return Ok(der[content + 2..content + 34].to_vec());
+            }
         }
-        if tag == 0x03 && len == 0x21 && p + 3 + 32 <= der.len() && der[p + 2] == 0x00 {
-            return Ok(der[p + 3..p + 3 + 32].to_vec());
+        if tag == 0x03 && len == 0x21 && content + 33 <= der.len() && der[content] == 0x00 {
+            return Ok(der[content + 1..content + 33].to_vec());
         }
         p += 2 + len;
     }
