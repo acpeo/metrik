@@ -59,7 +59,15 @@ struct DeviceIdentity {
     device_id: String,
     /// PKCS#8 DER：签名与公钥提取的直接来源（绕开 PEM 文本解析）。
     private_key_der: Vec<u8>,
-    public_key_b64url: String,
+    /// 原始 32 字节公钥（握手 device.publicKey 用 base64url 形态发出）。
+    public_key_raw: [u8; 32],
+}
+
+/// OpenClaw deviceId 形态：sha256(rawPubKey) 的小写 hex（64 字符）。
+/// 由本机两份真实配对身份推导并双样本验证。
+fn sha256_hex(data: &[u8]) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, data);
+    digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn base64url(data: &[u8]) -> String {
@@ -101,10 +109,12 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
             }
         };
         let public_raw = ed25519_public_from_pkcs8(&private_key_der)?;
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&public_raw);
         return Ok(DeviceIdentity {
-            device_id: base64url(&public_raw),
+            device_id: sha256_hex(&key),
             private_key_der,
-            public_key_b64url: base64url(&public_raw),
+            public_key_raw: key,
         });
     }
 
@@ -130,17 +140,19 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     let created = chrono::Utc::now().timestamp_millis();
     let store = json!({
         "version": 1,
-        "deviceId": base64url(&public_raw),
+        "deviceId": sha256_hex(&public_raw),
         "privateKeyDerB64": base64url(pkcs8_bytes),
         "createdAtMs": created,
     });
     std::fs::write(&path, serde_json::to_string_pretty(&store)?)
         .with_context(|| format!("write {}", path.display()))?;
 
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&public_raw);
     Ok(DeviceIdentity {
-        device_id: base64url(&public_raw),
+        device_id: sha256_hex(&key),
         private_key_der: pkcs8_bytes.to_vec(),
-        public_key_b64url: base64url(&public_raw),
+        public_key_raw: key,
     })
 }
 
@@ -329,7 +341,7 @@ impl GatewayClient {
                     "userAgent": "metrik/1.0",
                     "device": {
                         "id": identity.device_id,
-                        "publicKey": identity.public_key_b64url,
+                        "publicKey": base64url(&identity.public_key_raw),
                         "signature": signature,
                         "signedAt": signed_at_ms,
                         "nonce": nonce,
