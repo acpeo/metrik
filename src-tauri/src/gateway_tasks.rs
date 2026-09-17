@@ -87,12 +87,19 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     if path.exists() {
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)
             .context("device.json is not valid JSON")?;
-        let der_b64 = value
-            .get("privateKeyDerB64")
-            .and_then(Value::as_str)
-            .context("device.json missing privateKeyDerB64")?;
-        let private_key_der = base64_decode(der_b64)
-            .context("device.json privateKeyDerB64 is not valid base64")?;
+        let private_key_der = match value.get("privateKeyDerB64").and_then(Value::as_str) {
+            Some(der_b64) => base64_decode(der_b64)
+                .context("device.json privateKeyDerB64 is not valid base64")?,
+            // 旧版/OpenClaw 生成的文件只有 PEM 字段：解码出 DER 直接使用
+            // （公钥提取兼容 v1 48B 嵌套与 v2 83B 两种形态）。
+            None => {
+                let pem = value
+                    .get("privateKeyPem")
+                    .and_then(Value::as_str)
+                    .context("device.json has neither privateKeyDerB64 nor privateKeyPem")?;
+                pem_to_der(pem).context("device.json privateKeyPem is not valid PEM")?
+            }
+        };
         let public_raw = ed25519_public_from_pkcs8(&private_key_der)?;
         return Ok(DeviceIdentity {
             device_id: base64url(&public_raw),
