@@ -224,6 +224,17 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// PEM 文本 → DER 字节（去头尾行与空白后 base64 解码）。
+fn pem_to_der(pem: &str) -> Option<Vec<u8>> {
+    let body: String = pem
+        .lines()
+        .filter(|line| !line.contains("-----"))
+        .collect::<Vec<_>>()
+        .join("");
+    let body: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    base64_decode(&body)
+}
+
 /// 握手签名参数：v3 载荷的非常量部分（clippy too_many_arguments 阈值 7）。
 struct SignContext<'a> {
     client_id: &'a str,
