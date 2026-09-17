@@ -4683,7 +4683,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
     { id: "failed", label: "失败/中断" },
   ];
   const now = Date.now();
-  const STALE_MS = 30_000; // 运行中但 30 秒无活动 → 疑似中断
+  const STALE_MS = 120_000; // 活跃会话 2 分钟无更新 → 疑似卡住（长任务工具调用常见超 30s，勿过敏感）
 
   return (
     <main className="tasks-section">
@@ -4801,7 +4801,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
                 <div className="task-row-main">
                   <div className="task-row-title">
                     <TaskStatusPill status={task.status} />
-                    {stale && <span className="task-pill task-pill--stale">疑似中断</span>}
+                    {stale && <span className="task-pill task-pill--stale">疑似卡住</span>}
                     <strong>{task.title || task.label || task.taskId}</strong>
                   </div>
                   <div className="task-row-meta">
