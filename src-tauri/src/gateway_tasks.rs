@@ -869,7 +869,8 @@ mod tests {
         let first = load_or_create_identity(&dir).unwrap();
         let second = load_or_create_identity(&dir).unwrap();
         assert_eq!(first.device_id, second.device_id, "身份必须稳定复用");
-        assert_eq!(first.device_id.len(), 43, "Ed25519 raw pk base64url = 43 chars");
+        // OpenClaw deviceId 形态：sha256(rawPubKey).hex（64 字符）。
+        assert_eq!(first.device_id.len(), 64, "sha256 hex deviceId = 64 chars");
 
         // 一致性：DER 提取的公钥与 device_id 同源
         let public_raw = ed25519_public_from_pkcs8(&first.private_key_der).unwrap();
