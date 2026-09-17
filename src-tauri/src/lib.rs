@@ -876,7 +876,6 @@ async fn gateway_agents_snapshot(
             .map_err(|_| "usage scan lock poisoned".to_owned())?;
         let connection = storage::open_database(&database_path)
             .map_err(|error| error.to_string())?;
-        let mut last_fetch: Option<(String, std::time::Instant)> = None;
         let mut merged: Vec<gateway_tasks::AgentActivity> = Vec::new();
         for target in &gateways {
             let gw = gateway_tasks::GatewayTarget {

@@ -526,6 +526,7 @@ pub struct AgentActivity {
 }
 
 pub struct AgentsSnapshot {
+    #[allow(dead_code)] // 预留给后续 UI 显示"更新于"时间戳
     pub collected_at_ms: i64,
     pub agents: Vec<AgentActivity>,
 }
