@@ -109,7 +109,24 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
                 pem_to_der(pem).context("device.json privateKeyPem is not valid PEM")?
             }
         };
-        let public_raw = ed25519_public_from_pkcs8(&private_key_der)?;
+        // 公钥来源分形态：v2 DER 内嵌公钥直接提取；v1 DER 只有 seed，
+        // 从同文件 publicKeyPem（SPKI 尾 32B）取真公钥。
+        let public_raw = match ed25519_public_from_pkcs8(&private_key_der) {
+            Ok(raw) => raw,
+            Err(_) => {
+                let spki_pem = value
+                    .get("publicKeyPem")
+                    .and_then(Value::as_str)
+                    .context("v1 identity lacks embedded pubkey; publicKeyPem required")?;
+                let spki_der = pem_to_der(spki_pem)
+                    .context("device.json publicKeyPem is not valid PEM")?;
+                let spki_len = spki_der.len();
+                if spki_len < 32 {
+                    bail!("SPKI DER shorter than 32 bytes");
+                }
+                spki_der[spki_len - 32..].to_vec()
+            }
+        };
         let mut key = [0u8; 32];
         key.copy_from_slice(&public_raw);
         return Ok(DeviceIdentity {
@@ -160,14 +177,18 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
 /// 从 Ed25519 私钥 DER 提取 raw 公钥。DER 可能是 48 字节 PKCS#8（ring 生成，
 /// 头 302e…04220420），也可能带 V3 扩展形态（长度字节不同）——不硬编码前缀，
 /// 改为按 ASN.1 定位 OCTET STRING，取其中 32 字节 Ed25519 公钥。
-fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
-    // 唯一权威路径：让 ring 解析 DER 重建 keypair，再推导公钥。
-    // PKCS#8 v1（48B）里的 32B 是私钥种子而非公钥——任何"从 DER 直接抠
-    // 32 字节"的捷径在 v1 上都会把 seed 当公钥，导致网关验签失败
-    // （device signature invalid 的根因）。
-    let pair = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(der)
-        .map_err(|error| anyhow!("bad Ed25519 private key DER: {error}"))?;
-    Ok(pair.public_key().as_ref().to_vec())
+fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
+    // 83B v2（我们自己生成的身份）：公钥在固定 offset 51..83
+    // （ring 0.17.14 ed25519_pkcs8_v2_template.der 布局，源码铁证）。
+    // 48B v1（OpenClaw 旧身份）：此处只有 seed，没有公钥——公钥从身份
+    // 文件的 publicKeyPem（SPKI 尾 32B）获取，见 load_or_create_identity。
+    if der.len() == 83 && der[48] == 0x81 && der[49] == 0x21 && der[50] == 0x00 {
+        return Ok(der[51..83].to_vec());
+    }
+    bail!(
+        "no public key embedded in this DER form (len={}); use publicKeyPem from the identity file",
+        der.len()
+    );
 }
 
 fn base64_decode(text: &str) -> Option<Vec<u8>> {
