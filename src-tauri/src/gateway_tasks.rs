@@ -57,9 +57,10 @@ pub struct GatewayTarget {
 #[derive(Clone, Debug)]
 struct DeviceIdentity {
     device_id: String,
-    /// PKCS#8 DER：签名与公钥提取的直接来源（绕开 PEM 文本解析）。
+    /// PKCS#8 DER：ring 重建 keypair 的直接来源（签名内部用 seed）。
     private_key_der: Vec<u8>,
     /// 原始 32 字节公钥（握手 device.publicKey 用 base64url 形态发出）。
+    /// 注意：v1 DER 里的 32B 是 seed 不是公钥，必须经 ring 推导。
     public_key_raw: [u8; 32],
 }
 
@@ -160,49 +161,13 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
 /// 头 302e…04220420），也可能带 V3 扩展形态（长度字节不同）——不硬编码前缀，
 /// 改为按 ASN.1 定位 OCTET STRING，取其中 32 字节 Ed25519 公钥。
 fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
-    // ring 0.17.14 按 ed25519_pkcs8_v2_template.der 组装（源码 src/pkcs8.rs wrap_key）：
-    // prefix(16B: 3051020101 300506032b6570 04220420) || seed(32B) ||
-    // middle(3B: 81 21 00，[1] IMPLICIT BIT STRING 头) || pubkey(32B)，总 83 字节。
-    // 公钥固定在 offset 51..83；布局不符时回退到 OID 扫描。
-    if der.len() == 83 && der[48] == 0x81 && der[49] == 0x21 && der[50] == 0x00 {
-        return Ok(der[51..83].to_vec());
-    }
-    // 回退：按 Ed25519 OID 1.3.101.112 扫描，兼容三种包裹形态：
-    // v2 快路径已处理 83B；此处覆盖 v1 48B（04 22 → 内层 04 20 → key）
-    // 与裸 OCTET STRING（04 20 → key）。
-    const OID: [u8; 3] = [0x2b, 0x65, 0x70];
-    let oid_pos = der
-        .windows(3)
-        .position(|window| window == OID)
-        .context("Ed25519 OID not found in private key DER")?;
-    let mut p = oid_pos + 3;
-    while p + 2 < der.len() {
-        let tag = der[p];
-        let len = der[p + 1] as usize;
-        let content = p + 2;
-        if tag == 0x04 {
-            // 直接 32 字节裸公钥
-            if len == 0x20 && content + 32 <= der.len() {
-                return Ok(der[content..content + 32].to_vec());
-            }
-            // v1 嵌套：OCTET STRING 内容本身是 04 20 <32B>
-            if len == 0x22
-                && content + 34 <= der.len()
-                && der[content] == 0x04
-                && der[content + 1] == 0x20
-            {
-                return Ok(der[content + 2..content + 34].to_vec());
-            }
-        }
-        if tag == 0x03 && len == 0x21 && content + 33 <= der.len() && der[content] == 0x00 {
-            return Ok(der[content + 1..content + 33].to_vec());
-        }
-        p += 2 + len;
-    }
-    bail!(
-        "Ed25519 public key not found in private DER (len={})",
-        der.len()
-    );
+    // 唯一权威路径：让 ring 解析 DER 重建 keypair，再推导公钥。
+    // PKCS#8 v1（48B）里的 32B 是私钥种子而非公钥——任何"从 DER 直接抠
+    // 32 字节"的捷径在 v1 上都会把 seed 当公钥，导致网关验签失败
+    // （device signature invalid 的根因）。
+    let pair = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(der)
+        .map_err(|error| anyhow!("bad Ed25519 private key DER: {error}"))?;
+    Ok(pair.public_key().as_ref().to_vec())
 }
 
 fn base64_decode(text: &str) -> Option<Vec<u8>> {
