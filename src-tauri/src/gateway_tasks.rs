@@ -872,9 +872,9 @@ mod tests {
         // OpenClaw deviceId 形态：sha256(rawPubKey).hex（64 字符）。
         assert_eq!(first.device_id.len(), 64, "sha256 hex deviceId = 64 chars");
 
-        // 一致性：DER 提取的公钥与 device_id 同源
+        // 一致性：device_id 必须等于 sha256(提取公钥).hex（OpenClaw 公式）
         let public_raw = ed25519_public_from_pkcs8(&first.private_key_der).unwrap();
-        assert_eq!(base64url(&public_raw), first.device_id);
+        assert_eq!(sha256_hex(&public_raw), first.device_id);
         // 密码学自证：从存储的 DER 重建 keypair 签名，用提取出的公钥验签——
         // 提取错了（比如拿到私钥）这一步必然失败。
         let pair = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&first.private_key_der)
