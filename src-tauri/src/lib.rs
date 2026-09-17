@@ -815,6 +815,8 @@ async fn gateway_task_snapshot(
         let connection = storage::open_database(&database_path)
             .map_err(|error| error.to_string())?;
         let mut views = Vec::new();
+        // 节流状态：同一网关 2.5 秒内的重复快照直接复用上一拍结果。
+        let mut last_fetch: Option<(String, std::time::Instant)> = None;
         for target in &gateways {
             let gw = gateway_tasks::GatewayTarget {
                 label: target.label.clone(),
@@ -822,7 +824,7 @@ async fn gateway_task_snapshot(
                 token: target.token.clone(),
                 identity_dir: target.identity_dir.clone(),
             };
-            match gateway_tasks::snapshot_gateway_tasks(&connection, &gw) {
+            match gateway_tasks::snapshot_gateway_tasks_throttled(&connection, &gw, &mut last_fetch) {
                 Ok(_) => views.push(GatewayTaskView {
                     gateway: target.label.clone(),
                     ok: true,

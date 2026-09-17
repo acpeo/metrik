@@ -7,6 +7,8 @@ function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 }
 
+export { isTauriRuntime };
+
 /// 演示数据：一组形态真实的多 Agent 协作任务（含 running / blocked / 终态）。
 function demoTasks() {
   const now = Date.now();

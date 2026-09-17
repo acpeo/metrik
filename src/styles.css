@@ -4302,6 +4302,64 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root {
 .settings-device-list span { color: #83858a; font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .settings-device-list small { color: #6c6f73; font-size: 12px; font-variant-numeric: tabular-nums; }
 
+/* ---- 实时监控指示灯 ---- */
+.tasks-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 12px;
+  border-radius: 13px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(31, 33, 36, 0.06);
+  color: #74767a;
+}
+
+.live-indicator--on {
+  background: rgba(31, 122, 77, 0.12);
+  color: #1f7a4d;
+}
+
+:root[data-theme="dark"] .live-indicator { background: rgba(240, 240, 240, 0.08); color: #8a8c90; }
+:root[data-theme="dark"] .live-indicator--on { background: rgba(111, 196, 154, 0.14); color: #6fc49a; }
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.live-indicator--on .live-dot {
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+
+.tasks-last-sync {
+  font-size: 11.5px;
+  color: #9a9ca0;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-pill--stale {
+  background: rgba(224, 150, 30, 0.16);
+  color: #a06a10;
+}
+
+:root[data-theme="dark"] .task-pill--stale { background: rgba(240, 180, 80, 0.16); color: #e8b45c; }
+
 .reports-section {
   grid-column: 2 / 4;
   height: 100dvh;

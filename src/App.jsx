@@ -49,7 +49,7 @@ import qwenAppIcon from "./assets/qwen-app-icon.png";
 import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
-import { loadGatewayConfig, loadGatewayTasks, refreshGatewayTasks, saveGatewayConfig } from "./taskClient.js";
+import { isTauriRuntime, loadGatewayConfig, loadGatewayTasks, refreshGatewayTasks, saveGatewayConfig } from "./taskClient.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -4572,22 +4572,54 @@ function TasksSection({ gateways, onGatewaysChanged }) {
   const [state, setState] = useState({ status: "loading", filter: "active", data: null });
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  const [lastSync, setLastSync] = useState(null);
+  const [live, setLive] = useState(false);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const load = useCallback((filter) => {
-    setState((current) => ({ ...current, status: "loading", filter }));
     loadGatewayTasks(filter === "all" ? null : filter)
-      .then((data) => setState((current) => ({ ...current, status: "ready", data })))
+      .then((data) => {
+        setState((current) => ({ ...current, status: "ready", data }));
+        setLastSync(Date.now());
+      })
       .catch(() => setState((current) => ({ ...current, status: "error", data: null })));
   }, []);
 
+  // 实时监控循环：3 秒一拍。Tauri 下每拍先触发后端快照（拉网关写账本），
+  // 再读账本刷新视图；浏览器演示模式只读演示数据。页面隐藏时暂停。
   useEffect(() => {
-    load(state.filter);
-    const timer = setInterval(() => {
-      if (document.visibilityState !== "hidden") load(state.filter);
-    }, 60_000);
-    return () => clearInterval(timer);
+    let alive = true;
+    load(stateRef.current.filter);
+    const tick = async () => {
+      if (!alive || document.visibilityState === "hidden") return;
+      const filter = stateRef.current.filter;
+      if (isTauriRuntime() && gateways.length) {
+        try {
+          const result = await refreshGatewayTasks(gateways);
+          const failures = result.results.filter((entry) => !entry.ok);
+          setLive(failures.length === 0);
+          setFeedback(
+            failures.length
+              ? { tone: "error", message: failures.map((entry) => `${entry.gateway}：${entry.error}`).join("；") }
+              : null,
+          );
+        } catch {
+          setLive(false);
+        }
+      } else if (!gateways.length) {
+        setLive(false);
+      }
+      load(filter);
+    };
+    tick();
+    const timer = setInterval(tick, 3000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.filter, load]);
+  }, [gateways.map((gateway) => gateway.label).join("|"), load]);
 
   const handleRefresh = async () => {
     if (!gateways.length) {
@@ -4619,7 +4651,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
       <main className="tasks-section" aria-busy="true">
         <header className="settings-header">
           <h1>任务</h1>
-          <p>正在读取本地任务账本。只读已落账的记录，不触发网络请求。</p>
+          <p>正在连接 Gateway 并建立实时监控…</p>
         </header>
       </main>
     );
@@ -4629,7 +4661,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
       <main className="tasks-section">
         <header className="settings-header">
           <h1>任务</h1>
-          <p>任务账本读取失败，稍后重试。</p>
+          <p>任务账本读取失败，稍后自动重试。</p>
         </header>
       </main>
     );
@@ -4638,20 +4670,36 @@ function TasksSection({ gateways, onGatewaysChanged }) {
   const data = state.data;
   const tasks = data?.tasks || [];
   const activeCount = tasks.filter((task) => task.status === "running" || task.status === "queued").length;
-  const taskGateways = [...new Set(tasks.map((task) => task.gateway))];
   const filters = [
     { id: "active", label: `进行中 (${activeCount})` },
     { id: "all", label: `全部 (${tasks.length})` },
     { id: "succeeded", label: "已完成" },
     { id: "failed", label: "失败/中断" },
   ];
+  const now = Date.now();
+  const STALE_MS = 30_000; // 运行中但 30 秒无活动 → 疑似中断
 
   return (
     <main className="tasks-section">
       <header className="settings-header">
-        <h1>任务</h1>
+        <div className="tasks-title-row">
+          <h1>任务</h1>
+          <span
+            className={live ? "live-indicator live-indicator--on" : "live-indicator"}
+            title={live ? "每 3 秒自动同步 Gateway" : "未在同步：检查 Gateway 配置或网络"}
+          >
+            <span className="live-dot" />
+            {live ? "实时监控中" : "未同步"}
+          </span>
+          {lastSync && (
+            <span className="tasks-last-sync">
+              更新于 {new Date(lastSync).toLocaleTimeString("zh-CN", { hour12: false })}
+            </span>
+          )}
+        </div>
         <p>
-          OpenClaw Gateway 的后台任务台账（subagent / cron / CLI / ACP）。
+          OpenClaw Gateway 的后台任务台账（subagent / cron / CLI / ACP），每 3 秒自动同步。
+          说明：普通对话轮次不计入台账；subagent 派工、cron、CLI 才是任务。
           本地账本保留全部历史；官方侧终态记录 7 天后清理。
         </p>
       </header>
@@ -4677,7 +4725,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
           disabled={busy}
           onClick={handleRefresh}
         >
-          <ArrowsClockwise size={14} /> {busy ? "拉取中…" : "从 Gateway 拉取"}
+          <ArrowsClockwise size={14} /> {busy ? "拉取中…" : "立即同步"}
         </button>
       </div>
 
@@ -4691,37 +4739,43 @@ function TasksSection({ gateways, onGatewaysChanged }) {
       )}
       {data?.loadError && <p className="tasks-feedback tasks-feedback--error">{data.loadError}</p>}
 
-      {!gateways.length && tasks.length === 0 ? (
+      {tasks.length === 0 ? (
         <div className="tasks-empty">
           <ListChecks size={30} weight="light" />
           <p>
-            还没有任何任务记录。配置被追踪的 Gateway 后点「从 Gateway 拉取」，
-            或等待自动刷新。本机 Gateway 无需额外配置即可拉取。
+            还没有任务记录。派一个 subagent 任务（例如让主 Agent 拆分子任务），
+            几秒内这里就会出现"运行中"条目。本机 Gateway 已配置时无需手动操作。
           </p>
         </div>
       ) : (
         <div className="task-list">
-          {tasks.map((task) => (
-            <article key={`${task.gateway}:${task.taskId}`} className="task-row">
-              <div className="task-row-main">
-                <div className="task-row-title">
-                  <TaskStatusPill status={task.status} />
-                  <strong>{task.title || task.label || task.taskId}</strong>
+          {tasks.map((task) => {
+            const isActive = task.status === "running" || task.status === "queued";
+            const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
+            const stale = isActive && now - lastSeen > STALE_MS;
+            return (
+              <article key={`${task.gateway}:${task.taskId}`} className="task-row">
+                <div className="task-row-main">
+                  <div className="task-row-title">
+                    <TaskStatusPill status={task.status} />
+                    {stale && <span className="task-pill task-pill--stale">疑似中断</span>}
+                    <strong>{task.title || task.label || task.taskId}</strong>
+                  </div>
+                  <div className="task-row-meta">
+                    <span className="task-meta-gateway">{task.gateway}</span>
+                    <span>{task.runtime || task.kind || "任务"}</span>
+                    {task.agentId && <span>{task.agentId}</span>}
+                    {Number.isFinite(task.startedAtMs) && (
+                      <span>已运行 {formatTaskDuration(task.startedAtMs, task.endedAtMs) || "—"}</span>
+                    )}
+                    <span>最近活动 {formatTaskAge(lastSeen)}</span>
+                  </div>
+                  {task.error && <p className="task-row-error">{task.error}</p>}
                 </div>
-                <div className="task-row-meta">
-                  <span className="task-meta-gateway">{task.gateway}</span>
-                  <span>{task.runtime || task.kind || "任务"}</span>
-                  {task.agentId && <span>{task.agentId}</span>}
-                  {Number.isFinite(task.startedAtMs) && (
-                    <span>已运行 {formatTaskDuration(task.startedAtMs, task.endedAtMs) || "—"}</span>
-                  )}
-                  <span>最近活动 {formatTaskAge(task.lastSeenMs)}</span>
-                </div>
-                {task.error && <p className="task-row-error">{task.error}</p>}
-              </div>
-            </article>
-          ))}
-          {tasks.length === 0 && <p className="tasks-empty">该筛选下暂无任务。</p>}
+              </article>
+            );
+          })}
+          {state.filter !== "all" && <p className="tasks-empty">当前筛选下暂无任务。</p>}
         </div>
       )}
     </main>

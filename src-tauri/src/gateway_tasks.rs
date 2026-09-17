@@ -666,6 +666,27 @@ pub fn snapshot_gateway_tasks(connection: &Connection, target: &GatewayTarget) -
     upsert_tasks(connection, &target.label, &snapshot)
 }
 
+/// 快照节流：同一网关 MIN_INTERVAL_MS 内的重复调用直接复用上次结果，
+/// 避免前端 3 秒节拍叠加多个视图时对网关发起过量握手。
+const SNAPSHOT_MIN_INTERVAL_MS: i64 = 2500;
+
+pub fn snapshot_gateway_tasks_throttled(
+    connection: &Connection,
+    target: &GatewayTarget,
+    last_fetch_ms: &mut Option<(String, Instant)>,
+) -> Result<usize> {
+    if let Some((label, at)) = last_fetch_ms {
+        if label == &target.label && at.elapsed() < Duration::from_millis(SNAPSHOT_MIN_INTERVAL_MS as u64)
+        {
+            // 视为成功但不重新拉网关；账本内容仍是新鲜的（上一拍刚写过）。
+            return Ok(0);
+        }
+    }
+    let written = snapshot_gateway_tasks(connection, target)?;
+    *last_fetch_ms = Some((target.label.clone(), Instant::now()));
+    Ok(written)
+}
+
 // ---------------------------------------------------------------------------
 // 账本查询（任务页数据源）
 // ---------------------------------------------------------------------------
