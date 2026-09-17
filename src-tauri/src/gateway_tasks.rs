@@ -177,7 +177,7 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
 /// 从 Ed25519 私钥 DER 提取 raw 公钥。DER 可能是 48 字节 PKCS#8（ring 生成，
 /// 头 302e…04220420），也可能带 V3 扩展形态（长度字节不同）——不硬编码前缀，
 /// 改为按 ASN.1 定位 OCTET STRING，取其中 32 字节 Ed25519 公钥。
-fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
+fn ed25519_public_from_pkcs8(der: &[u8]) -> Result<Vec<u8>> {
     // 83B v2（我们自己生成的身份）：公钥在固定 offset 51..83
     // （ring 0.17.14 ed25519_pkcs8_v2_template.der 布局，源码铁证）。
     // 48B v1（OpenClaw 旧身份）：此处只有 seed，没有公钥——公钥从身份
