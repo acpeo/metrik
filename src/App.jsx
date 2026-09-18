@@ -3142,6 +3142,67 @@ const SETTINGS_TABS = [
   },
 ];
 
+function MonitorSettingsCard() {
+  const [draft, setDraft] = useState(() => loadMonitorConfig());
+  const [saved, setSaved] = useState(false);
+
+  const current = loadMonitorConfig();
+  const dirty =
+    Number(draft.refreshIntervalSec) !== current.refreshIntervalSec ||
+    Number(draft.staleThresholdSec) !== current.staleThresholdSec;
+
+  const apply = () => {
+    saveMonitorConfig(draft);
+    setDraft(loadMonitorConfig());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  return (
+    <div className="settings-card">
+      <h2>实时监控参数</h2>
+      <p className="gateway-hint">
+        任务页的自动同步间隔与"无活动"判定阈值。保存后立即生效，无需重启或重装。
+      </p>
+      <div className="gateway-form">
+        <label className="monitor-field">
+          <span>自动同步间隔（秒，1–60）</span>
+          <input
+            type="number"
+            min="1"
+            max="60"
+            value={draft.refreshIntervalSec}
+            aria-label="自动同步间隔秒数"
+            onChange={(event) => setDraft((current) => ({ ...current, refreshIntervalSec: event.target.value }))}
+          />
+        </label>
+        <label className="monitor-field">
+          <span>无活动判定阈值（秒，10–3600）</span>
+          <input
+            type="number"
+            min="10"
+            max="3600"
+            value={draft.staleThresholdSec}
+            aria-label="无活动判定阈值秒数"
+            onChange={(event) => setDraft((current) => ({ ...current, staleThresholdSec: event.target.value }))}
+          />
+        </label>
+        <button
+          type="button"
+          className="ledger-button ledger-button--primary"
+          disabled={!dirty}
+          onClick={apply}
+        >
+          {saved ? "已保存" : "保存参数"}
+        </button>
+      </div>
+      <p className="gateway-hint">
+        建议：同步 2–5 秒；无活动阈值 60–300 秒（北斗星位一轮思考加工具调用常超 30 秒，不宜过短）。
+      </p>
+    </div>
+  );
+}
+
 function GatewaySettingsCard({ gateways, onGatewaysChanged }) {
   const [draft, setDraft] = useState({ label: "", url: "", token: "" });
   const [busy, setBusy] = useState(false);
@@ -3383,7 +3444,10 @@ function SettingsSection({ onSnapshotRefresh, gateways, onGatewaysChanged, widge
         )}
 
         {activeTab.id === "gateways" && (
-          <GatewaySettingsCard gateways={gateways} onGatewaysChanged={onGatewaysChanged} />
+          <>
+            <GatewaySettingsCard gateways={gateways} onGatewaysChanged={onGatewaysChanged} />
+            <MonitorSettingsCard />
+          </>
         )}
 
         {activeTab.id === "sync" && (
@@ -4575,6 +4639,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
   const [lastSync, setLastSync] = useState(null);
   const [live, setLive] = useState(false);
   const [agentsSnap, setAgentsSnap] = useState(null);
+  const [monitor, setMonitor] = useState(() => loadMonitorConfig());
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -4587,7 +4652,14 @@ function TasksSection({ gateways, onGatewaysChanged }) {
       .catch(() => setState((current) => ({ ...current, status: "error", data: null })));
   }, []);
 
-  // 实时监控循环：3 秒一拍。Tauri 下每拍先触发后端快照（拉网关写账本），
+  // 设置页保存监控参数后立即生效（刷新间隔变化会重建定时器）
+  useEffect(() => {
+    const handler = () => setMonitor(loadMonitorConfig());
+    window.addEventListener("metrik-monitor-changed", handler);
+    return () => window.removeEventListener("metrik-monitor-changed", handler);
+  }, []);
+
+  // 实时监控循环：默认 3 秒一拍（间隔可在设置 → 任务追踪里调整）。Tauri 下每拍先触发后端快照（拉网关写账本），
   // 再读账本刷新视图；浏览器演示模式只读演示数据。页面隐藏时暂停。
   useEffect(() => {
     let alive = true;
@@ -4619,13 +4691,13 @@ function TasksSection({ gateways, onGatewaysChanged }) {
       load(filter);
     };
     tick();
-    const timer = setInterval(tick, 3000);
+    const timer = setInterval(tick, Math.max(1, monitor.refreshIntervalSec) * 1000);
     return () => {
       alive = false;
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gateways.map((gateway) => gateway.label).join("|"), load]);
+  }, [gateways.map((gateway) => gateway.label).join("|"), monitor.refreshIntervalSec, load]);
 
   const handleRefresh = async () => {
     if (!gateways.length) {
@@ -4683,7 +4755,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
     { id: "failed", label: "失败/中断" },
   ];
   const now = Date.now();
-  const STALE_MS = 120_000; // 活跃会话 2 分钟无更新 → 疑似卡住（长任务工具调用常见超 30s，勿过敏感）
+  const STALE_MS = Math.max(10, monitor.staleThresholdSec) * 1000; // 无活动判定阈值（设置页可调）
 
   return (
     <main className="tasks-section">

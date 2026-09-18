@@ -152,6 +152,40 @@ export async function loadAgentsSnapshot(gateways) {
   }
 }
 
+/// 监控参数（任务页刷新间隔 / 无活动判定阈值）：存本机 localStorage，
+/// 修改后下一拍即生效，无需重装。
+const MONITOR_KEY = "metrik-monitor-cfg";
+
+function clampNumber(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+export function loadMonitorConfig() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(MONITOR_KEY) || "{}");
+    return {
+      refreshIntervalSec: clampNumber(raw.refreshIntervalSec, 3, 1, 60),
+      staleThresholdSec: clampNumber(raw.staleThresholdSec, 120, 10, 3600),
+    };
+  } catch {
+    return { refreshIntervalSec: 3, staleThresholdSec: 120 };
+  }
+}
+
+export function saveMonitorConfig(config) {
+  const clean = {
+    refreshIntervalSec: clampNumber(config.refreshIntervalSec, 3, 1, 60),
+    staleThresholdSec: clampNumber(config.staleThresholdSec, 120, 10, 3600),
+  };
+  localStorage.setItem(MONITOR_KEY, JSON.stringify(clean));
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("metrik-monitor-changed"));
+  }
+  return clean;
+}
+
 const GATEWAYS_KEY = "metrik:gateways";
 
 export function loadGatewayConfig() {
