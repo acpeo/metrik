@@ -3204,7 +3204,7 @@ function MonitorSettingsCard() {
 }
 
 function GatewaySettingsCard({ gateways, onGatewaysChanged }) {
-  const [draft, setDraft] = useState({ label: "", url: "", token: "" });
+  const [draft, setDraft] = useState({ label: "", url: "", token: "", identityDir: "" });
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState(null);
 
@@ -3215,25 +3215,33 @@ function GatewaySettingsCard({ gateways, onGatewaysChanged }) {
     setBusy(true);
     setFeedback(null);
     try {
+      const entry = {
+        label: draft.label.trim(),
+        url: draft.url.trim(),
+        token: draft.token.trim(),
+      };
+      // 身份目录可选：远程网关用专用设备身份（identity/device.json）。
+      // 本机网关留空 → 后端用默认 state 目录的探测身份。
+      if (draft.identityDir.trim()) {
+        entry.identityDir = draft.identityDir.trim();
+      }
       // 连通性验证：直接试拉一次。失败也允许保存（VPS 可能暂时离线），
       // 但把错误显示出来让用户知道。
-      const result = await refreshGatewayTasks([
-        { label: draft.label.trim(), url: draft.url.trim(), token: draft.token.trim() },
-      ]);
+      const result = await refreshGatewayTasks([entry]);
       const outcome = result.results?.[0];
       const next = [
-        ...gateways.filter((entry) => entry.label !== draft.label.trim()),
-        { label: draft.label.trim(), url: draft.url.trim(), token: draft.token.trim() },
+        ...gateways.filter((candidate) => candidate.label !== entry.label),
+        entry,
       ];
       saveGatewayConfig(next);
       onGatewaysChanged(next);
-      setDraft({ label: "", url: "", token: "" });
+      setDraft({ label: "", url: "", token: "", identityDir: "" });
       if (outcome?.ok) {
-        setFeedback({ tone: "success", message: `已添加并连通：${draft.label.trim()}` });
+        setFeedback({ tone: "success", message: `已添加并连通：${entry.label}` });
       } else {
         setFeedback({
           tone: "error",
-          message: `已保存，但连通失败：${outcome?.error || "未知原因"}（远程设备首次连接需在网关侧 openclaw devices approve）`,
+          message: `已保存，但连通失败：${outcome?.error || "未知原因"}（回环/SSH 隧道自动批准；否则需在网关侧 openclaw devices approve）`,
         });
       }
     } finally {
@@ -3288,6 +3296,14 @@ function GatewaySettingsCard({ gateways, onGatewaysChanged }) {
           aria-label="Gateway token"
           onChange={(event) => setDraft((current) => ({ ...current, token: event.target.value }))}
         />
+        <input
+          type="text"
+          value={draft.identityDir}
+          placeholder="身份目录（可选，远程网关用，如 C:\\Users\\me\\.openclaw-vps-metrik）"
+          aria-label="Gateway 身份目录"
+          spellCheck={false}
+          onChange={(event) => setDraft((current) => ({ ...current, identityDir: event.target.value }))}
+        />
         <button type="button" className="ledger-button ledger-button--primary" disabled={busy || !valid} onClick={addGateway}>
           {busy ? "验证中…" : "添加并验证"}
         </button>
@@ -3298,8 +3314,10 @@ function GatewaySettingsCard({ gateways, onGatewaysChanged }) {
         </p>
       )}
       <p className="gateway-hint">
-        远程 Gateway：网关需 --bind loopback 之外的可达绑定；首次连接在网关侧执行
-        openclaw devices approve 批准本设备。token 与任务元数据不出本机。
+        远程 Gateway：推荐 SSH 隧道（ssh -N -L 127.0.0.1:18790:127.0.0.1:18789 user@vps），
+        地址填 ws://127.0.0.1:18790，回环自动批准；公网直连则需在网关侧
+        openclaw devices approve。远程网关请填专用身份目录（内含 identity/device.json，
+        由 metrik-gateway-setup.sh 生成）；本机网关留空。token 与任务元数据不出本机。
       </p>
     </div>
   );
