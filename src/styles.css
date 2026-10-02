@@ -6615,18 +6615,10 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 /* 独立任务窗的 footer 不在 .widget-content 里（拿不到它的 10px 内距），自己补齐。
-   时间跟在"已连接"后（原位置），但 10px/9px 两档字号在 align-center 下基线不齐，
-   改按基线对齐，图标保持居中。 */
+   对齐方式跟原版 footer 一致用垂直居中——基线对齐在"中文+数字"混排下数字会显浮
+   （2026-10-02 用户对照原版截图纠正）。 */
 .tasks-window-footer {
   padding: 2px 10px;
-}
-
-.tasks-window-footer .widget-source {
-  align-items: baseline;
-}
-
-.tasks-window-footer .widget-source svg {
-  align-self: center;
 }
 
 .monitor-field--check {

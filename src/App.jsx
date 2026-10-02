@@ -1810,6 +1810,7 @@ function useWidgetTasksFeed(gateways, enabled) {
   const [live, setLive] = useState(false);
   const [lastSync, setLastSync] = useState(0);
   const [intervalSec, setIntervalSec] = useState(() => loadMonitorConfig().refreshIntervalSec);
+  const [refreshTick, setRefreshTick] = useState(0);
   const gatewaysRef = useRef(gateways);
   gatewaysRef.current = gateways;
 
@@ -1854,9 +1855,16 @@ function useWidgetTasksFeed(gateways, enabled) {
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, gatewayKey, intervalSec]);
+  }, [enabled, gatewayKey, intervalSec, refreshTick]);
 
-  return { tasks, agents, live, lastSync };
+  return {
+    tasks,
+    agents,
+    live,
+    lastSync,
+    // 底栏强制刷新按钮：立即补一拍（并重启节流计时器，与改刷新间隔同一语义）。
+    refresh: () => setRefreshTick((tick) => tick + 1),
+  };
 }
 
 /// 任务行首的状态色竖条：与 Agent 行的彩色边条同一语言（绿=跑，红=败，灰=终态）。
@@ -1947,6 +1955,7 @@ function TasksWidgetWindow({
 }) {
   const [pinned, setPinned] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const tasks = feed.tasks?.tasks || [];
   const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
   const recent = tasks
@@ -2131,6 +2140,21 @@ function TasksWidgetWindow({
           <span>{feed.live ? "Gateway 已连接" : "Gateway 未同步"}</span>
           <small>{feed.lastSync ? new Date(feed.lastSync).toLocaleTimeString("zh-CN", { hour12: false }) : "--:--"}</small>
         </span>
+        <button
+          type="button"
+          className="widget-refresh"
+          onClick={() => {
+            if (refreshing) return;
+            setRefreshing(true);
+            feed.refresh?.();
+            window.setTimeout(() => setRefreshing(false), 900);
+          }}
+          disabled={refreshing}
+          aria-label="强制刷新任务"
+          title="强制刷新任务"
+        >
+          <ArrowsClockwise size={13} weight="light" aria-hidden="true" />
+        </button>
         <button type="button" className="widget-expand" onClick={onOpenExpanded}>
           <span>完整视图</span>
           <ArrowsOutSimple size={16} weight="light" aria-hidden="true" />

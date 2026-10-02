@@ -1556,8 +1556,8 @@ fn update_macos_status_items(
 }
 
 /// 托盘菜单请求完整视图；前端监听后自己完成变形（见 windowClient 的
-/// onTrayShowExpanded）。macOS 的完整视图是独立窗口，走 macos.rs 自己的菜单栏。
-#[cfg(all(desktop, not(target_os = "macos")))]
+/// onTrayShowExpanded）。macOS 的完整视图是独立窗口，前端不监听这个事件
+/// （任务小组件底栏的"完整视图"也会发它，macOS 上无监听者、只聚焦主窗）。
 const TRAY_SHOW_EXPANDED: &str = "tray://show-expanded";
 
 #[cfg(target_os = "linux")]
