@@ -1097,7 +1097,10 @@ mod tests {
         .unwrap();
         let rows = list_tasks(&db, None, None).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].progress_summary.as_deref(), Some("正在对比装机成本"));
+        assert_eq!(
+            rows[0].progress_summary.as_deref(),
+            Some("正在对比装机成本")
+        );
     }
 
     #[test]
