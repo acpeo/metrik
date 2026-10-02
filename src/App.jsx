@@ -120,6 +120,9 @@ import {
   updateMacStatusItems,
   updateTrayQuotaBadge,
   setWindowGlass,
+  toggleTasksWidgetWindow,
+  showMainExpanded,
+  closeCurrentWindow,
   setPinnedHoverTargetOpacity,
   setWindowPinned,
   setWindowUiScale,
@@ -1911,6 +1914,124 @@ function WidgetTasksCard({ feed, onOpenTasks }) {
         </div>
       )}
     </section>
+  );
+}
+
+/// 任务追踪小组件：独立小窗。外壳与桌面小组件同一套玻璃 token（原项目视觉），
+/// 内容 = 实时指示 + 运行中/近期任务 + 活跃 Agent 星位 + 底栏（完整视图 / 关闭）。
+/// 数据源与用量小组件上的任务卡片共用同一条轮询（useWidgetTasksFeed）。
+function TasksWidgetWindow({
+  feed,
+  transparent,
+  glassMode,
+  glassTint,
+  glassInk,
+  glassAlpha,
+  onOpenExpanded,
+  onClose,
+}) {
+  const tasks = feed.tasks?.tasks || [];
+  const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
+  const recent = tasks
+    .filter((task) => task.status !== "running" && task.status !== "queued")
+    .slice(0, 8);
+  const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
+  const now = Date.now();
+  const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
+  const shellAppearance = glassShellAppearance("widget", {
+    transparent,
+    glassMode,
+    glassTint,
+    glassInk,
+    glassAlpha,
+    isMac: IS_MAC,
+    loading: false,
+  });
+  const renderRow = (task, dimmed) => {
+    const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
+    const isActiveState = task.status === "running" || task.status === "queued";
+    const stale = isActiveState && now - lastSeen > staleMs;
+    return (
+      <div
+        className={`widget-task-row${dimmed ? " widget-task-row--ended" : ""}`}
+        key={`${task.gateway}:${task.taskId}`}
+      >
+        <TaskStatusPill status={task.status} />
+        {stale && <span className="task-pill task-pill--stale">卡?</span>}
+        <span className="widget-task-title" title={task.title || task.taskId}>
+          {task.title || task.taskId}
+        </span>
+        <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
+      </div>
+    );
+  };
+  return (
+    <main className={shellAppearance.className}>
+      <h1 className="sr-only">Metrik Gateway 任务追踪小组件</h1>
+      <header className="widget-titlebar" onPointerDown={(event) => {
+        if (event.target.closest("button")) return;
+        startWindowDragging();
+      }}>
+        <span className="widget-brand">
+          <span className={feed.live ? "live-indicator live-indicator--on" : "live-indicator"}>
+            <span className="live-dot" />
+            {feed.live ? "实时" : "未同步"}
+          </span>
+          任务追踪
+        </span>
+        <div className="window-actions">
+          <button type="button" className="window-action" onClick={onClose} aria-label="关闭任务小组件" title="关闭">
+            <X size={15} weight="light" aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+      <div className="tasks-window-content">
+        <section className="widget-tasks tasks-window-body" aria-label="Gateway 任务">
+          {active.length === 0 && recent.length === 0 && (
+            <p className="widget-tasks-empty">
+              {tasks.length ? "暂无任务记录" : "等待首次同步…（主窗口 设置 → 任务追踪 配置 Gateway）"}
+            </p>
+          )}
+          {active.map((task) => renderRow(task, false))}
+          {active.length > 0 && recent.length > 0 && <p className="tasks-window-divider">近期完成</p>}
+          {recent.map((task) => renderRow(task, true))}
+          {agents.length > 0 && (
+            <div className="widget-tasks-agents">
+              {agents.slice(0, 6).map((agent) => {
+                const lastSeen = Number.isFinite(agent.lastActiveMs) ? agent.lastActiveMs : 0;
+                const shortId = agent.agentId.includes(":")
+                  ? agent.agentId.slice(agent.agentId.indexOf(":") + 1)
+                  : agent.agentId;
+                return (
+                  <span
+                    key={agent.agentId}
+                    className={`widget-agent-chip ${now - lastSeen > staleMs ? "widget-agent-chip--stale" : ""}`}
+                    title={lastSeen ? `最近活动 ${formatTaskAge(lastSeen)}` : "活跃中"}
+                  >
+                    <i className="agent-status-dot" aria-hidden="true" />
+                    {agent.name || shortId}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </div>
+      <footer className="widget-footer">
+        <span
+          className="widget-source"
+          title={feed.lastSync ? `更新于 ${new Date(feed.lastSync).toLocaleTimeString("zh-CN", { hour12: false })}` : "尚未同步"}
+        >
+          <ShieldCheck size={15} weight="fill" aria-hidden="true" />
+          <span>{feed.live ? "Gateway 已连接" : "Gateway 未同步"}</span>
+          <small>{feed.lastSync ? new Date(feed.lastSync).toLocaleTimeString("zh-CN", { hour12: false }) : "--:--"}</small>
+        </span>
+        <button type="button" className="widget-expand" onClick={onOpenExpanded}>
+          <span>完整视图</span>
+          <ArrowsOutSimple size={16} weight="light" aria-hidden="true" />
+        </button>
+      </footer>
+    </main>
   );
 }
 
@@ -5611,7 +5732,9 @@ function EmptySection({ section, onReturn }) {
 
 function initialWindowMode() {
   if (typeof window === "undefined") return "compact";
-  if (new URLSearchParams(window.location.search).get("view") === "expanded") return "expanded";
+  const urlView = new URLSearchParams(window.location.search).get("view");
+  if (urlView === "expanded") return "expanded";
+  if (urlView === "tasks") return "tasks-widget";
   // macOS 的零占地摘要属于菜单栏状态图标，不再把面板压成一条悬浮胶囊。
   if (IS_MAC) return "compact";
   // 上次收成胶囊条则恢复；expanded 不恢复。
@@ -5647,7 +5770,10 @@ export function App() {
     window.addEventListener("metrik-monitor-changed", handler);
     return () => window.removeEventListener("metrik-monitor-changed", handler);
   }, []);
-  const widgetTasksFeed = useWidgetTasksFeed(gateways, tasksWidgetEnabled && viewMode === "compact");
+  const widgetTasksFeed = useWidgetTasksFeed(
+    gateways,
+    tasksWidgetEnabled && (viewMode === "compact" || viewMode === "tasks-widget"),
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pinned, setPinned] = useState(() => localStorage.getItem("metrik:pinned") === "true");
   const [pinnedHoverMode, setPinnedHoverMode] = useState(() =>
@@ -6452,6 +6578,7 @@ export function App() {
   useEffect(() => {
     if (IS_MAC) return undefined;
     const stopPromise = onTrayShowExpanded(() => {
+      if (viewModeRef.current === "tasks-widget") return;
       // 置顶悬浮层已经完全只读；托盘打开完整视图时直达设置，让用户有一条
       // 明确且唯一的解除路径。未置顶仍按原行为进入概览。
       setActiveNav(IS_LINUX && pinnedRef.current ? "settings" : "overview");
@@ -6539,6 +6666,21 @@ export function App() {
     loadSnapshot(currentPeriod.current, { force: true });
   }, [loadSnapshot]);
 
+  if (viewMode === "tasks-widget") {
+    return (
+      <TasksWidgetWindow
+        feed={widgetTasksFeed}
+        transparent={transparent}
+        glassMode={glassMode}
+        glassTint={glassTint}
+        glassInk={glassInk}
+        glassAlpha={shellGlassAlpha}
+        onOpenExpanded={() => runWindowAction(() => showMainExpanded())}
+        onClose={() => closeCurrentWindow()}
+      />
+    );
+  }
+
   if (viewMode === "strip" && !IS_MAC) {
     return (
       <>
@@ -6591,7 +6733,7 @@ export function App() {
             tasksWidgetEnabled && gateways.length ? (
               <WidgetTasksCard
                 feed={widgetTasksFeed}
-                onOpenTasks={() => runWindowAction(() => openExpandedWindow("tasks"))}
+                onOpenTasks={() => runWindowAction(() => toggleTasksWidgetWindow())}
               />
             ) : null
           }

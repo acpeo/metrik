@@ -6475,6 +6475,46 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   opacity: 0.5;
 }
 
+/* ── 独立任务小组件窗口（?view=tasks）────────────────────────────────
+   外壳复用 .widget-* 全套玻璃 token；这里只补内容区的专属布局。 */
+
+.tasks-window-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 2px 10px 6px;
+}
+
+.tasks-window-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: none;
+  padding: 4px 2px;
+  scrollbar-width: thin;
+}
+
+.widget-task-row--ended {
+  opacity: 0.58;
+}
+
+.widget-task-row--ended .widget-task-title {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+.tasks-window-divider {
+  margin: 7px 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  opacity: 0.5;
+}
+
+.tasks-window-body .widget-tasks-agents {
+  padding-top: 8px;
+}
+
 .monitor-field--check {
   flex-direction: row;
   align-items: center;

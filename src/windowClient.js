@@ -1763,6 +1763,32 @@ async function autostartApi() {
   return import("@tauri-apps/plugin-autostart");
 }
 
+/// 任务追踪小组件：独立小窗开关（已开着则关闭）。非桌面环境 no-op。
+async function toggleTasksWidgetWindow() {
+  if (!isDesktop()) return;
+  await invoke("toggle_tasks_widget_window").catch((error) => {
+    console.warn("Unable to toggle the tasks widget window.", error);
+  });
+}
+
+/// 主窗口唤到前台并切完整视图（任务小组件底栏的"完整视图"用）。
+async function showMainExpanded() {
+  if (!isDesktop()) return;
+  await invoke("show_main_expanded").catch((error) => {
+    console.warn("Unable to open the expanded view.", error);
+  });
+}
+
+/// 关闭当前窗口：Tauri 下走窗口 API（新附窗没有宿主 window.close 语义）。
+async function closeCurrentWindow() {
+  if (!isDesktop()) {
+    window.close();
+    return;
+  }
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  getCurrentWindow().close();
+}
+
 /// 检查更新（设置页手动点击，或启动后及持续运行时每天自动检查；后者可在设置关闭）。
 /// 返回 null 表示已是最新（或非桌面环境）。
 async function checkForUpdate() {
@@ -1865,6 +1891,9 @@ export {
   updateTrayQuotaBadge,
   setStripScale,
   setWindowGlass,
+  toggleTasksWidgetWindow,
+  showMainExpanded,
+  closeCurrentWindow,
   setPinnedHoverBehavior,
   setPinnedHoverTargetOpacity,
   setWindowPinned,

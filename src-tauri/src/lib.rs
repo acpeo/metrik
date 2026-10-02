@@ -1423,6 +1423,52 @@ fn open_expanded_window(app: tauri::AppHandle, nav: Option<String>) -> Result<()
     }
 }
 
+/// 任务追踪小组件：独立小窗（index.html?view=tasks）。已开着则关闭——前端把它当开关用。
+/// 这是 Windows 上第一扇运行时创建的附窗；透明/无边框与主窗口同一套参数。
+#[tauri::command]
+fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("tasks-widget") {
+        let _ = window.close();
+        return Ok(());
+    }
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        "tasks-widget",
+        tauri::WebviewUrl::App("index.html?view=tasks".into()),
+    )
+    .title("Metrik 任务")
+    .inner_size(300.0, 432.0)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .resizable(false)
+    .skip_taskbar(true)
+    .focused(false);
+    // 锚在主窗口右侧同一高度，别每次都飘到屏幕中央。
+    if let Some(main) = app.get_webview_window("main") {
+        if let Ok(outer) = main.outer_position() {
+            let scale = main.scale_factor().unwrap_or(1.0);
+            builder = builder.position((outer.x as f64 + 336.0) / scale, outer.y as f64 / scale);
+        }
+    }
+    builder.build().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// 任务小组件底栏的"完整视图"：把主窗口唤到前台并切到完整视图
+/// （复用托盘"显示完整视图"的同一事件，Windows 上完整视图是主窗口变形）。
+#[tauri::command]
+fn show_main_expanded(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.unminimize();
+        let _ = main.set_focus();
+    }
+    use tauri::Emitter;
+    let _ = app.emit(TRAY_SHOW_EXPANDED, ());
+    Ok(())
+}
+
 /// macOS 可选桌面组件由独立原生窗口承载；其它平台没有对应形态。
 #[tauri::command]
 fn set_macos_desktop_widget_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
@@ -1959,7 +2005,9 @@ pub fn run() {
             update_macos_status_items,
             gateway_task_snapshot,
             gateway_task_list,
-            gateway_agents_snapshot
+            gateway_agents_snapshot,
+            toggle_tasks_widget_window,
+            show_main_expanded
         ])
         .run(tauri::generate_context!())
         .expect("error while running Metrik");
