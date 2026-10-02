@@ -34,7 +34,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct OpenclawAdapter {
     roots: Vec<PathBuf>,
@@ -274,7 +274,7 @@ mod tests {
         path
     }
 
-    fn parse_file(path: &PathBuf) -> ParsedScan {
+    fn parse_file(path: &Path) -> ParsedScan {
         let meta = path.metadata().unwrap();
         let candidate = SourceCandidate {
             source_id: "s".into(),
