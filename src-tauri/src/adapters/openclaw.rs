@@ -264,7 +264,8 @@ mod tests {
     use std::io::Write;
 
     fn write_temp(name: &str, body: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("metrik-openclaw-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("metrik-openclaw-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("aaaaaaaa-1111-2222-3333-444444444444.jsonl");
@@ -291,10 +292,14 @@ mod tests {
     #[test]
     fn assistant_usage_splits_components_and_self_checks() {
         let body = concat!(
-            r#"{"type":"session","version":1,"id":"aaaaaaaa-1111-2222-3333-444444444444","timestamp":"2026-09-15T09:00:00.000Z","cwd":"C:\\work\\demo"}"#, "\n",
-            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","provider":"zai","model":"zai_glm-5.3-flash","usage":{"input":39668,"output":4522,"cacheRead":144832,"reasoningTokens":3330,"totalTokens":189022}}}"#, "\n",
-            r#"{"type":"message","id":"m2","timestamp":"2026-09-15T09:10:01.000Z","message":{"role":"user"}}"#, "\n",
-            r#"{"type":"message","id":"m3","timestamp":"2026-09-15T09:11:01.000Z","message":{"role":"assistant","model":"zai_glm-5.3-flash","usage":{"input":100,"output":30,"cacheRead":0,"cacheWrite":0,"reasoningTokens":10,"totalTokens":130}}}"#, "\n"
+            r#"{"type":"session","version":1,"id":"aaaaaaaa-1111-2222-3333-444444444444","timestamp":"2026-09-15T09:00:00.000Z","cwd":"C:\\work\\demo"}"#,
+            "\n",
+            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","provider":"zai","model":"zai_glm-5.3-flash","usage":{"input":39668,"output":4522,"cacheRead":144832,"reasoningTokens":3330,"totalTokens":189022}}}"#,
+            "\n",
+            r#"{"type":"message","id":"m2","timestamp":"2026-09-15T09:10:01.000Z","message":{"role":"user"}}"#,
+            "\n",
+            r#"{"type":"message","id":"m3","timestamp":"2026-09-15T09:11:01.000Z","message":{"role":"assistant","model":"zai_glm-5.3-flash","usage":{"input":100,"output":30,"cacheRead":0,"cacheWrite":0,"reasoningTokens":10,"totalTokens":130}}}"#,
+            "\n"
         );
         let path = write_temp("usage", body);
         let parsed = parse_file(&path);
@@ -322,7 +327,8 @@ mod tests {
     #[test]
     fn reported_total_mismatch_is_flagged() {
         let body = concat!(
-            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","usage":{"input":100,"output":20,"cacheRead":0,"totalTokens":999}}}"#, "\n"
+            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","usage":{"input":100,"output":20,"cacheRead":0,"totalTokens":999}}}"#,
+            "\n"
         );
         let path = write_temp("mismatch", body);
         let parsed = parse_file(&path);
@@ -336,8 +342,10 @@ mod tests {
     #[test]
     fn missing_total_and_missing_usage_are_tolerated() {
         let body = concat!(
-            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","usage":{"input":10,"output":5,"cacheRead":0}}}"#, "\n",
-            r#"{"type":"message","id":"m2","timestamp":"2026-09-15T09:09:02.000Z","message":{"role":"assistant"}}"#, "\n"
+            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","usage":{"input":10,"output":5,"cacheRead":0}}}"#,
+            "\n",
+            r#"{"type":"message","id":"m2","timestamp":"2026-09-15T09:09:02.000Z","message":{"role":"assistant"}}"#,
+            "\n"
         );
         let path = write_temp("no-total", body);
         let parsed = parse_file(&path);
@@ -351,10 +359,14 @@ mod tests {
     #[test]
     fn cwd_follows_latest_session_header() {
         let body = concat!(
-            r#"{"type":"session","id":"aaaaaaaa-1111-2222-3333-444444444444","timestamp":"2026-09-15T09:00:00.000Z","cwd":"C:\\work\\a"}"#, "\n",
-            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","usage":{"input":10,"output":1,"cacheRead":0,"totalTokens":11}}}"#, "\n",
-            r#"{"type":"session","id":"aaaaaaaa-1111-2222-3333-444444444444","timestamp":"2026-09-15T10:00:00.000Z","cwd":"C:\\work\\b"}"#, "\n",
-            r#"{"type":"message","id":"m2","timestamp":"2026-09-15T10:09:01.508Z","message":{"role":"assistant","usage":{"input":20,"output":2,"cacheRead":0,"totalTokens":22}}}"#, "\n"
+            r#"{"type":"session","id":"aaaaaaaa-1111-2222-3333-444444444444","timestamp":"2026-09-15T09:00:00.000Z","cwd":"C:\\work\\a"}"#,
+            "\n",
+            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","usage":{"input":10,"output":1,"cacheRead":0,"totalTokens":11}}}"#,
+            "\n",
+            r#"{"type":"session","id":"aaaaaaaa-1111-2222-3333-444444444444","timestamp":"2026-09-15T10:00:00.000Z","cwd":"C:\\work\\b"}"#,
+            "\n",
+            r#"{"type":"message","id":"m2","timestamp":"2026-09-15T10:09:01.508Z","message":{"role":"assistant","usage":{"input":20,"output":2,"cacheRead":0,"totalTokens":22}}}"#,
+            "\n"
         );
         let path = write_temp("cwd", body);
         let parsed = parse_file(&path);
@@ -373,7 +385,8 @@ mod tests {
     fn malformed_lines_mark_partial_without_dropping_events() {
         let body = concat!(
             "{not json}\n",
-            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","usage":{"input":10,"output":1,"cacheRead":0,"totalTokens":11}}}"#, "\n"
+            r#"{"type":"message","id":"m1","timestamp":"2026-09-15T09:09:01.508Z","message":{"role":"assistant","usage":{"input":10,"output":1,"cacheRead":0,"totalTokens":11}}}"#,
+            "\n"
         );
         let path = write_temp("malformed", body);
         let parsed = parse_file(&path);
@@ -395,7 +408,9 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            dir.join("main").join("sessions").join("s1.trajectory.jsonl"),
+            dir.join("main")
+                .join("sessions")
+                .join("s1.trajectory.jsonl"),
             "{\"traceSchema\":\"openclaw-trajectory\"}\n",
         )
         .unwrap();
@@ -410,7 +425,8 @@ mod tests {
     #[test]
     fn events_before_cutoff_are_skipped() {
         let body = concat!(
-            r#"{"type":"message","id":"m1","timestamp":"2020-01-01T00:00:00.000Z","message":{"role":"assistant","usage":{"input":10,"output":1,"cacheRead":0,"totalTokens":11}}}"#, "\n"
+            r#"{"type":"message","id":"m1","timestamp":"2020-01-01T00:00:00.000Z","message":{"role":"assistant","usage":{"input":10,"output":1,"cacheRead":0,"totalTokens":11}}}"#,
+            "\n"
         );
         let path = write_temp("cutoff", body);
         let meta = path.metadata().unwrap();

@@ -1643,8 +1643,8 @@ async fn gateway_task_snapshot(
         let _gate = scan_gate
             .lock()
             .map_err(|_| "usage scan lock poisoned".to_owned())?;
-        let connection = storage::open_database(&database_path)
-            .map_err(|error| error.to_string())?;
+        let connection =
+            storage::open_database(&database_path).map_err(|error| error.to_string())?;
         let mut views = Vec::new();
         // 节流状态：同一网关 2.5 秒内的重复快照直接复用上一拍结果。
         let mut last_fetch: Option<(String, std::time::Instant)> = None;
@@ -1655,7 +1655,8 @@ async fn gateway_task_snapshot(
                 token: target.token.clone(),
                 identity_dir: target.identity_dir.clone(),
             };
-            match gateway_tasks::snapshot_gateway_tasks_throttled(&connection, &gw, &mut last_fetch) {
+            match gateway_tasks::snapshot_gateway_tasks_throttled(&connection, &gw, &mut last_fetch)
+            {
                 Ok(_) => views.push(GatewayTaskView {
                     gateway: target.label.clone(),
                     ok: true,
@@ -1684,8 +1685,8 @@ fn gateway_task_list(
     state: State<'_, AppState>,
 ) -> Result<Vec<gateway_tasks::GatewayTaskRow>, String> {
     let database_path = state.database_path.clone();
-    let connection = storage::open_database_read_only(&database_path)
-        .map_err(|error| error.to_string())?;
+    let connection =
+        storage::open_database_read_only(&database_path).map_err(|error| error.to_string())?;
     gateway_tasks::list_tasks(&connection, status.as_deref(), limit)
         .map_err(|error| error.to_string())
 }
@@ -1705,8 +1706,8 @@ async fn gateway_agents_snapshot(
         let _gate = scan_gate
             .lock()
             .map_err(|_| "usage scan lock poisoned".to_owned())?;
-        let connection = storage::open_database(&database_path)
-            .map_err(|error| error.to_string())?;
+        let connection =
+            storage::open_database(&database_path).map_err(|error| error.to_string())?;
         let mut merged: Vec<gateway_tasks::AgentActivity> = Vec::new();
         for target in &gateways {
             let gw = gateway_tasks::GatewayTarget {
@@ -1721,10 +1722,19 @@ async fn gateway_agents_snapshot(
                 Ok(snapshot) => {
                     for mut agent in snapshot.agents {
                         agent.agent_id = format!("{}:{}", target.label, agent.agent_id);
-                        if let Some(existing) = merged.iter_mut().find(|existing| existing.agent_id == agent.agent_id) {
+                        if let Some(existing) = merged
+                            .iter_mut()
+                            .find(|existing| existing.agent_id == agent.agent_id)
+                        {
                             existing.running_tasks += agent.running_tasks;
                             existing.session_count += agent.session_count;
-                            if agent.last_active_ms.map(|new| existing.last_active_ms.map(|old| new > old).unwrap_or(true)).unwrap_or(false) {
+                            if agent
+                                .last_active_ms
+                                .map(|new| {
+                                    existing.last_active_ms.map(|old| new > old).unwrap_or(true)
+                                })
+                                .unwrap_or(false)
+                            {
                                 existing.last_active_ms = agent.last_active_ms;
                             }
                             existing.active = existing.active || agent.active;

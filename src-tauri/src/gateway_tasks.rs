@@ -68,7 +68,11 @@ struct DeviceIdentity {
 /// 由本机两份真实配对身份推导并双样本验证。
 fn sha256_hex(data: &[u8]) -> String {
     let digest = ring::digest::digest(&ring::digest::SHA256, data);
-    digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+    digest
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn base64url(data: &[u8]) -> String {
@@ -77,7 +81,11 @@ fn base64url(data: &[u8]) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(TABLE[(n >> 18) as usize & 63] as char);
         out.push(TABLE[(n >> 12) as usize & 63] as char);
@@ -118,8 +126,8 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
                     .get("publicKeyPem")
                     .and_then(Value::as_str)
                     .context("v1 identity lacks embedded pubkey; publicKeyPem required")?;
-                let spki_der = pem_to_der(spki_pem)
-                    .context("device.json publicKeyPem is not valid PEM")?;
+                let spki_der =
+                    pem_to_der(spki_pem).context("device.json publicKeyPem is not valid PEM")?;
                 let spki_len = spki_der.len();
                 if spki_len < 32 {
                     bail!("SPKI DER shorter than 32 bytes");
@@ -150,7 +158,6 @@ fn load_or_create_identity(identity_dir: &Path) -> Result<DeviceIdentity> {
     // ring 0.17：public_key() 已私有化，从 PKCS#8 DER 尾部取 raw 公钥
     // （Ed25519 PKCS#8 固定 16 字节头 + 32 字节 key，总长 48）。
     let public_raw = ed25519_public_from_pkcs8(pkcs8_bytes)?;
-
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
@@ -261,8 +268,9 @@ fn sign_payload_v3(identity: &DeviceIdentity, ctx: &SignContext) -> Result<Strin
         &ctx.device_family.to_ascii_lowercase(),
     ]
     .join("|");
-    let pair = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&identity.private_key_der)
-        .map_err(|error| anyhow!("bad Ed25519 private key: {error}"))?;
+    let pair =
+        ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&identity.private_key_der)
+            .map_err(|error| anyhow!("bad Ed25519 private key: {error}"))?;
     let sig = pair.sign(payload.as_bytes());
     Ok(base64url(sig.as_ref()))
 }
@@ -336,10 +344,7 @@ impl GatewayClient {
             }),
         )?;
         let hello = Self::wait_response(&mut socket, start, "connect-1")?;
-        let ok = hello
-            .get("ok")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let ok = hello.get("ok").and_then(Value::as_bool).unwrap_or(false);
         if !ok {
             let message = hello
                 .pointer("/error/message")
@@ -365,10 +370,7 @@ impl GatewayClient {
             );
         }
 
-        Ok(Self {
-            socket,
-            next_id: 1,
-        })
+        Ok(Self { socket, next_id: 1 })
     }
 
     fn wait_challenge(
@@ -383,11 +385,10 @@ impl GatewayClient {
             }
             match socket.read()? {
                 Message::Text(text) => {
-                    let value: Value = serde_json::from_str(&text)
-                        .context("non-JSON gateway frame")?;
+                    let value: Value =
+                        serde_json::from_str(&text).context("non-JSON gateway frame")?;
                     if value.get("type").and_then(Value::as_str) == Some("event")
-                        && value.get("event").and_then(Value::as_str)
-                            == Some("connect.challenge")
+                        && value.get("event").and_then(Value::as_str) == Some("connect.challenge")
                     {
                         return value
                             .pointer("/payload/nonce")
@@ -406,14 +407,21 @@ impl GatewayClient {
         }
     }
 
-    fn send(socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>, value: &Value) -> Result<()> {
+    fn send(
+        socket: &mut tungstenite::WebSocket<
+            tungstenite::stream::MaybeTlsStream<std::net::TcpStream>,
+        >,
+        value: &Value,
+    ) -> Result<()> {
         socket
             .send(Message::text(serde_json::to_string(value)?))
             .map_err(|error| anyhow!("gateway send failed: {error}"))
     }
 
     fn wait_response(
-        socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
+        socket: &mut tungstenite::WebSocket<
+            tungstenite::stream::MaybeTlsStream<std::net::TcpStream>,
+        >,
         start: Instant,
         request_id: &str,
     ) -> Result<Value> {
@@ -558,10 +566,7 @@ pub fn fetch_agents_snapshot(target: &GatewayTarget) -> Result<AgentsSnapshot> {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_owned(),
-                    name: value
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
+                    name: value.get("name").and_then(Value::as_str).map(str::to_owned),
                     active: false,
                     last_active_ms: None,
                     session_count: 0,
@@ -589,7 +594,11 @@ pub fn fetch_agents_snapshot(target: &GatewayTarget) -> Result<AgentsSnapshot> {
             };
             agent.session_count += 1;
             if let Some(updated) = session.get("updatedAt").and_then(Value::as_i64) {
-                if agent.last_active_ms.map(|current| updated > current).unwrap_or(true) {
+                if agent
+                    .last_active_ms
+                    .map(|current| updated > current)
+                    .unwrap_or(true)
+                {
                     agent.last_active_ms = Some(updated);
                 }
             }
@@ -655,7 +664,11 @@ fn default_state_dir() -> PathBuf {
 /// - 运行中任务更新时间戳；终态任务落最终状态后不再被旧快照覆盖（观察合并
 ///   取"更完整"的记录：ended_at 补齐即视为更完整）。
 /// - 不删除任何记录：任务历史永久保留（这是本表存在的意义）。
-pub fn upsert_tasks(connection: &Connection, target_label: &str, snapshot: &TasksSnapshot) -> Result<usize> {
+pub fn upsert_tasks(
+    connection: &Connection,
+    target_label: &str,
+    snapshot: &TasksSnapshot,
+) -> Result<usize> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS gateway_task (
             task_id        TEXT NOT NULL,
@@ -691,7 +704,11 @@ pub fn upsert_tasks(connection: &Connection, target_label: &str, snapshot: &Task
         let status = task.status.as_deref();
         let has_terminal = matches!(
             status,
-            Some("succeeded") | Some("failed") | Some("timed_out") | Some("cancelled") | Some("lost")
+            Some("succeeded")
+                | Some("failed")
+                | Some("timed_out")
+                | Some("cancelled")
+                | Some("lost")
         );
         // 终态保护：已落终态的行不被非终态快照回退（任务台账以官方为权威，
         // 但本地观测可能乱序到达——重连后 list 可能先给旧的 running 再给终态）。
@@ -778,7 +795,8 @@ pub fn snapshot_gateway_tasks_throttled(
     last_fetch_ms: &mut Option<(String, Instant)>,
 ) -> Result<usize> {
     if let Some((label, at)) = last_fetch_ms {
-        if label == &target.label && at.elapsed() < Duration::from_millis(SNAPSHOT_MIN_INTERVAL_MS as u64)
+        if label == &target.label
+            && at.elapsed() < Duration::from_millis(SNAPSHOT_MIN_INTERVAL_MS as u64)
         {
             // 视为成功但不重新拉网关；账本内容仍是新鲜的（上一拍刚写过）。
             return Ok(0);
@@ -912,7 +930,10 @@ mod tests {
     }
 
     fn snapshot_at(ms: i64, tasks: Vec<GatewayTask>) -> TasksSnapshot {
-        TasksSnapshot { collected_at_ms: ms, tasks }
+        TasksSnapshot {
+            collected_at_ms: ms,
+            tasks,
+        }
     }
 
     #[test]
@@ -920,20 +941,32 @@ mod tests {
         let db = memory_db();
         // 首见：running
         assert_eq!(
-            upsert_tasks(&db, "本机", &snapshot_at(100, vec![task("t1", "running", None)]))
-                .unwrap(),
+            upsert_tasks(
+                &db,
+                "本机",
+                &snapshot_at(100, vec![task("t1", "running", None)])
+            )
+            .unwrap(),
             1
         );
         // 终态到达：completed → succeeded
         assert_eq!(
-            upsert_tasks(&db, "本机", &snapshot_at(200, vec![task("t1", "succeeded", Some(150))]))
-                .unwrap(),
+            upsert_tasks(
+                &db,
+                "本机",
+                &snapshot_at(200, vec![task("t1", "succeeded", Some(150))])
+            )
+            .unwrap(),
             1
         );
         // 乱序：旧的 running 快照后到，不得回退终态
         assert_eq!(
-            upsert_tasks(&db, "本机", &snapshot_at(300, vec![task("t1", "running", None)]))
-                .unwrap(),
+            upsert_tasks(
+                &db,
+                "本机",
+                &snapshot_at(300, vec![task("t1", "running", None)])
+            )
+            .unwrap(),
             0,
             "终态行不得被 running 快照回退"
         );
@@ -951,8 +984,18 @@ mod tests {
     #[test]
     fn same_task_id_on_two_gateways_stays_separate() {
         let db = memory_db();
-        upsert_tasks(&db, "本机", &snapshot_at(100, vec![task("t1", "running", None)])).unwrap();
-        upsert_tasks(&db, "VPS", &snapshot_at(100, vec![task("t1", "failed", Some(120))])).unwrap();
+        upsert_tasks(
+            &db,
+            "本机",
+            &snapshot_at(100, vec![task("t1", "running", None)]),
+        )
+        .unwrap();
+        upsert_tasks(
+            &db,
+            "VPS",
+            &snapshot_at(100, vec![task("t1", "failed", Some(120))]),
+        )
+        .unwrap();
         let n: i64 = db
             .query_row("SELECT COUNT(*) FROM gateway_task", [], |row| row.get(0))
             .unwrap();
@@ -964,7 +1007,10 @@ mod tests {
         let db = memory_db();
         let mut bad = task("", "running", None);
         bad.task_id = None;
-        assert_eq!(upsert_tasks(&db, "本机", &snapshot_at(1, vec![bad])).unwrap(), 0);
+        assert_eq!(
+            upsert_tasks(&db, "本机", &snapshot_at(1, vec![bad])).unwrap(),
+            0
+        );
         let n: i64 = db
             .query_row("SELECT COUNT(*) FROM gateway_task", [], |row| row.get(0))
             .unwrap();
@@ -986,8 +1032,9 @@ mod tests {
         assert_eq!(sha256_hex(&public_raw), first.device_id);
         // 密码学自证：从存储的 DER 重建 keypair 签名，用提取出的公钥验签——
         // 提取错了（比如拿到私钥）这一步必然失败。
-        let pair = ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&first.private_key_der)
-            .unwrap();
+        let pair =
+            ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&first.private_key_der)
+                .unwrap();
         let sig = pair.sign(b"payload");
         assert_eq!(sig.as_ref().len(), 64);
         ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &public_raw)
