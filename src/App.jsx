@@ -1795,6 +1795,125 @@ function StripBar({
   );
 }
 
+/// 小组件任务卡片的数据源：轻量轮询（网关快照 → 账本 → 会话活动）。
+/// 与任务页 TasksSection 的循环同节奏但互不依赖：两者从不在同一窗口同时挂载，
+/// 后端的 2.5s 网关节流兜住任何重叠。
+function useWidgetTasksFeed(gateways, enabled) {
+  const [tasks, setTasks] = useState(null);
+  const [agents, setAgents] = useState(null);
+  const [live, setLive] = useState(false);
+  const [lastSync, setLastSync] = useState(0);
+  const [intervalSec, setIntervalSec] = useState(() => loadMonitorConfig().refreshIntervalSec);
+  const gatewaysRef = useRef(gateways);
+  gatewaysRef.current = gateways;
+
+  // 设置页改监控参数（含保存开关触发的同一事件）后立即生效。
+  useEffect(() => {
+    const handler = () => setIntervalSec(loadMonitorConfig().refreshIntervalSec);
+    window.addEventListener("metrik-monitor-changed", handler);
+    return () => window.removeEventListener("metrik-monitor-changed", handler);
+  }, []);
+
+  const gatewayKey = gateways.map((gateway) => gateway.label).join("|");
+  useEffect(() => {
+    if (!enabled || !gateways.length) return undefined;
+    let alive = true;
+    const tick = async () => {
+      if (document.visibilityState === "hidden") return;
+      const current = gatewaysRef.current;
+      if (!current.length) return;
+      try {
+        const result = await refreshGatewayTasks(current);
+        setLive(result.results.every((entry) => entry.ok));
+      } catch {
+        setLive(false);
+      }
+      loadGatewayTasks(null)
+        .then((data) => {
+          if (!alive) return;
+          setTasks(data);
+          setLastSync(Date.now());
+        })
+        .catch(() => {});
+      loadAgentsSnapshot(current)
+        .then((snap) => {
+          if (alive) setAgents(snap);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const timer = setInterval(tick, Math.max(1, intervalSec) * 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, gatewayKey, intervalSec]);
+
+  return { tasks, agents, live, lastSync };
+}
+
+/// 桌面小组件的"任务追踪"卡片：实时指示 + 运行中任务 + 活跃 Agent。
+/// 常驻在用量行下方；点击头部直达完整任务页。
+function WidgetTasksCard({ feed, onOpenTasks }) {
+  const tasks = feed.tasks?.tasks || [];
+  const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
+  const shown = active.slice(0, 3);
+  const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
+  const now = Date.now();
+  const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
+  return (
+    <section className="widget-tasks" aria-label="Gateway 任务追踪">
+      <button type="button" className="widget-tasks-head" onClick={onOpenTasks} title="打开完整任务页">
+        <span className={feed.live ? "live-indicator live-indicator--on" : "live-indicator"}>
+          <span className="live-dot" />
+          {feed.live ? "实时" : "未同步"}
+        </span>
+        <strong>任务</strong>
+        <span className="widget-tasks-count">{active.length} 运行中</span>
+        <ArrowsOutSimple size={13} weight="light" aria-hidden="true" />
+      </button>
+      {shown.map((task) => {
+        const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
+        const stale = now - lastSeen > staleMs;
+        return (
+          <div className="widget-task-row" key={`${task.gateway}:${task.taskId}`}>
+            <TaskStatusPill status={task.status} />
+            {stale && <span className="task-pill task-pill--stale">卡?</span>}
+            <span className="widget-task-title" title={task.title || task.taskId}>
+              {task.title || task.taskId}
+            </span>
+            <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
+          </div>
+        );
+      })}
+      {active.length === 0 && (
+        <p className="widget-tasks-empty">{tasks.length ? "暂无进行中任务" : "等待首次同步…"}</p>
+      )}
+      {agents.length > 0 && (
+        <div className="widget-tasks-agents">
+          {agents.slice(0, 4).map((agent) => {
+            const lastSeen = Number.isFinite(agent.lastActiveMs) ? agent.lastActiveMs : 0;
+            const shortId = agent.agentId.includes(":")
+              ? agent.agentId.slice(agent.agentId.indexOf(":") + 1)
+              : agent.agentId;
+            return (
+              <span
+                key={agent.agentId}
+                className={`widget-agent-chip ${now - lastSeen > staleMs ? "widget-agent-chip--stale" : ""}`}
+                title={lastSeen ? `最近活动 ${formatTaskAge(lastSeen)}` : "活跃中"}
+              >
+                <i className="agent-status-dot" aria-hidden="true" />
+                {agent.name || shortId}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function CompactWidget({
   snapshot,
   period,
@@ -1815,6 +1934,7 @@ function CompactWidget({
   quotaAgent,
   onCycleQuotaAgent,
   widgetAgents,
+  tasksSlot,
   glassAlpha = 0.82,
   availableUpdate,
   onOpenUpdate,
@@ -2150,6 +2270,8 @@ function CompactWidget({
             });
           })()}
         </section>
+
+        {tasksSlot}
 
         <footer className="widget-footer">
           <button
@@ -3457,6 +3579,7 @@ const SETTINGS_TABS = [
 function MonitorSettingsCard() {
   const [draft, setDraft] = useState(() => loadMonitorConfig());
   const [saved, setSaved] = useState(false);
+  const [widgetTasks, setWidgetTasks] = useState(() => localStorage.getItem("metrik:tasksWidget") !== "off");
 
   const current = loadMonitorConfig();
   const dirty =
@@ -3498,6 +3621,19 @@ function MonitorSettingsCard() {
             aria-label="无活动判定阈值秒数"
             onChange={(event) => setDraft((current) => ({ ...current, staleThresholdSec: event.target.value }))}
           />
+        </label>
+        <label className="monitor-field monitor-field--check">
+          <input
+            type="checkbox"
+            checked={widgetTasks}
+            onChange={(event) => {
+              const next = event.target.checked;
+              localStorage.setItem("metrik:tasksWidget", next ? "on" : "off");
+              setWidgetTasks(next);
+              window.dispatchEvent(new Event("metrik-monitor-changed"));
+            }}
+          />
+          <span>在桌面小组件显示任务卡片</span>
         </label>
         <button
           type="button"
@@ -5503,6 +5639,15 @@ export function App() {
   );
   const [activeNav, setActiveNav] = useState(initialNav);
   const [gateways, setGateways] = useState(() => loadGatewayConfig());
+  const [tasksWidgetEnabled, setTasksWidgetEnabled] = useState(
+    () => localStorage.getItem("metrik:tasksWidget") !== "off",
+  );
+  useEffect(() => {
+    const handler = () => setTasksWidgetEnabled(localStorage.getItem("metrik:tasksWidget") !== "off");
+    window.addEventListener("metrik-monitor-changed", handler);
+    return () => window.removeEventListener("metrik-monitor-changed", handler);
+  }, []);
+  const widgetTasksFeed = useWidgetTasksFeed(gateways, tasksWidgetEnabled && viewMode === "compact");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pinned, setPinned] = useState(() => localStorage.getItem("metrik:pinned") === "true");
   const [pinnedHoverMode, setPinnedHoverMode] = useState(() =>
@@ -6442,6 +6587,14 @@ export function App() {
           quotaAgent={activeQuotaAgent}
           onCycleQuotaAgent={handleCycleQuotaAgent}
           widgetAgents={widgetAgents}
+          tasksSlot={
+            tasksWidgetEnabled && gateways.length ? (
+              <WidgetTasksCard
+                feed={widgetTasksFeed}
+                onOpenTasks={() => runWindowAction(() => openExpandedWindow("tasks"))}
+              />
+            ) : null
+          }
           glassAlpha={shellGlassAlpha}
           availableUpdate={availableUpdate}
           onOpenUpdate={handleOpenUpdate}
