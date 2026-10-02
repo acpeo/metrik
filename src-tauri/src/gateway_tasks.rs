@@ -512,6 +512,9 @@ pub struct GatewayTask {
     pub terminal_summary: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// 运行中任务的一句话进度（网关 tasks.list 的 progressSummary，原话透传）。
+    #[serde(default)]
+    pub progress_summary: Option<String>,
     #[serde(default)]
     pub label: Option<String>,
 }
@@ -773,6 +776,7 @@ pub fn upsert_tasks(
             updated_at_ms  INTEGER,
             terminal_summary TEXT,
             error          TEXT,
+            progress_summary TEXT,
             first_seen_ms  INTEGER NOT NULL,
             last_seen_ms   INTEGER NOT NULL,
             PRIMARY KEY (task_id, gateway)
@@ -780,6 +784,9 @@ pub fn upsert_tasks(
         CREATE INDEX IF NOT EXISTS idx_gateway_task_gateway_time
             ON gateway_task(gateway, first_seen_ms);",
     )?;
+    // 老账本补列：progress_summary 是后加字段，已有库 ALTER 补上
+    //（新库建表已带列，ALTER 报 duplicate column 直接忽略）。
+    let _ = connection.execute_batch("ALTER TABLE gateway_task ADD COLUMN progress_summary TEXT");
     let mut written = 0usize;
     for task in &snapshot.tasks {
         let task_id = match task.task_id.as_deref().filter(|id| !id.is_empty()) {
@@ -818,8 +825,8 @@ pub fn upsert_tasks(
                 task_id, gateway, runtime, kind, status, title, label, agent_id,
                 session_key, child_session_key, run_id,
                 created_at_ms, started_at_ms, ended_at_ms, updated_at_ms,
-                terminal_summary, error, first_seen_ms, last_seen_ms
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)
+                terminal_summary, error, progress_summary, first_seen_ms, last_seen_ms
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)
             ON CONFLICT(task_id, gateway) DO UPDATE SET
                 runtime = COALESCE(excluded.runtime, runtime),
                 kind = COALESCE(excluded.kind, kind),
@@ -836,6 +843,7 @@ pub fn upsert_tasks(
                 updated_at_ms = COALESCE(excluded.updated_at_ms, updated_at_ms),
                 terminal_summary = COALESCE(excluded.terminal_summary, terminal_summary),
                 error = COALESCE(excluded.error, error),
+                progress_summary = COALESCE(excluded.progress_summary, progress_summary),
                 last_seen_ms = excluded.last_seen_ms",
             rusqlite::params![
                 task_id,
@@ -855,6 +863,7 @@ pub fn upsert_tasks(
                 task.updated_at,
                 task.terminal_summary,
                 task.error,
+                task.progress_summary,
                 snapshot.collected_at_ms,
                 snapshot.collected_at_ms,
             ],
@@ -919,6 +928,7 @@ pub struct GatewayTaskRow {
     pub error: Option<String>,
     pub first_seen_ms: i64,
     pub last_seen_ms: i64,
+    pub progress_summary: Option<String>,
 }
 
 /// 读本地任务账本：按 last_seen 倒序，可选状态过滤与行数上限。
@@ -947,6 +957,7 @@ pub fn list_tasks(
             updated_at_ms  INTEGER,
             terminal_summary TEXT,
             error          TEXT,
+            progress_summary TEXT,
             first_seen_ms  INTEGER NOT NULL,
             last_seen_ms   INTEGER NOT NULL,
             PRIMARY KEY (task_id, gateway)
@@ -962,7 +973,8 @@ pub fn list_tasks(
     let sql = format!(
         "SELECT task_id, gateway, runtime, kind, status, title, label, agent_id, \
          session_key, child_session_key, run_id, created_at_ms, started_at_ms, \
-         ended_at_ms, updated_at_ms, terminal_summary, error, first_seen_ms, last_seen_ms \
+         ended_at_ms, updated_at_ms, terminal_summary, error, first_seen_ms, last_seen_ms, \
+         progress_summary \
          FROM gateway_task WHERE {where_clause} \
          ORDER BY COALESCE(updated_at_ms, last_seen_ms) DESC LIMIT {limit}"
     );
@@ -990,6 +1002,7 @@ pub fn list_tasks(
             error: row.get(16)?,
             first_seen_ms: row.get(17)?,
             last_seen_ms: row.get(18)?,
+            progress_summary: row.get(19)?,
         });
     }
     Ok(out)
@@ -1064,6 +1077,27 @@ mod tests {
             .unwrap();
         assert_eq!(stored.0, "succeeded");
         assert_eq!(stored.1, Some(150));
+    }
+
+    #[test]
+    fn progress_summary_round_trips_through_ledger() {
+        let db = memory_db();
+        let mut running = task("t1", "running", None);
+        running.progress_summary = Some("已检索 12 篇研报".to_owned());
+        upsert_tasks(&db, "本机", &snapshot_at(100, vec![running])).unwrap();
+        // 下一拍进度刷新：新话覆盖旧话；快照没带进度时保留旧话。
+        let mut advanced = task("t1", "running", None);
+        advanced.progress_summary = Some("正在对比装机成本".to_owned());
+        upsert_tasks(&db, "本机", &snapshot_at(200, vec![advanced])).unwrap();
+        upsert_tasks(
+            &db,
+            "本机",
+            &snapshot_at(300, vec![task("t1", "running", None)]),
+        )
+        .unwrap();
+        let rows = list_tasks(&db, None, None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].progress_summary.as_deref(), Some("正在对比装机成本"));
     }
 
     #[test]

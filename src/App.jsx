@@ -1899,13 +1899,19 @@ function WidgetTasksCard({ feed, onOpenTasks }) {
       {shown.map((task) => {
         const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
         const stale = now - lastSeen > staleMs;
+        // 迷你卡片塞不下进度行，进度挪进悬停提示。
+        const progressTip =
+          task.status === "running" && task.progressSummary ? `正在：${task.progressSummary}` : null;
         return (
           <div className="widget-task-row" key={`${task.gateway}:${task.taskId}`}>
             <i className={`widget-task-accent ${taskAccentClass(task.status)}`} aria-hidden="true" />
             <span className="widget-task-main">
               <TaskStatusPill status={task.status} />
               {stale && <span className="task-pill task-pill--stale">卡?</span>}
-              <span className="widget-task-title" title={task.title || task.taskId}>
+              <span
+                className="widget-task-title"
+                title={[task.title || task.taskId, progressTip].filter(Boolean).join("\n")}
+              >
                 {task.title || task.taskId}
               </span>
             </span>
@@ -2241,6 +2247,16 @@ function TasksWidgetWindow({
       </div>
     );
   };
+  // 运行中任务的进度一行小字（网关 tasks.list 的 progressSummary 原话）。
+  // 只有 running 且网关真给了进度才渲染，别给行硬凑空行。
+  const renderProgressLine = (task) => {
+    if (task.status !== "running" || !task.progressSummary) return null;
+    return (
+      <p className="task-progress-line" title={task.progressSummary}>
+        正在：{task.progressSummary}
+      </p>
+    );
+  };
   return (
     <main className={shellAppearance.className}>
       <h1 className="sr-only">Metrik Gateway 任务追踪小组件</h1>
@@ -2322,14 +2338,16 @@ function TasksWidgetWindow({
                 return (
                   <Fragment key={`${task.gateway}:${task.taskId}`}>
                     {renderActiveRow(task)}
+                    {renderProgressLine(task)}
                   </Fragment>
                 );
               }
-              // 有链路的任务：行 + 链路包成一组，底线挪到组底（链路紧贴自己的
-              // 任务，不被任务行的分隔线隔在外面）。
+              // 有链路的任务：行 + 进度 + 链路包成一组，底线挪到组底（链路紧贴
+              // 自己的任务，不被任务行的分隔线隔在外面）。
               return (
                 <div className="widget-task-group" key={`${task.gateway}:${task.taskId}`}>
                   {renderActiveRow(task)}
+                  {renderProgressLine(task)}
                   <TaskChainStepper
                     hops={hops}
                     currentTaskId={task.taskId}
@@ -2346,6 +2364,7 @@ function TasksWidgetWindow({
                 {usageSessions.map((session) => {
                   const name = agentDisplayName(agentNameMap, session.agentId) || session.agentId || session.key;
                   const running = Boolean(session.hasActiveRun);
+                  const model = session.model || null;
                   const estimate = Number.isFinite(session.estimatedPromptTokens) ? session.estimatedPromptTokens : null;
                   const budget = Number.isFinite(session.contextTokenBudget) ? session.contextTokenBudget : null;
                   const fillPct = estimate != null && budget > 0 ? Math.min(100, Math.round((estimate / budget) * 100)) : null;
@@ -2370,6 +2389,7 @@ function TasksWidgetWindow({
                       <span className="tasks-usage-name">
                         {name}
                         {badge ? <em>{badge}</em> : null}
+                        {model ? <small className="tasks-usage-model">{model}</small> : null}
                       </span>
                       <span className={`task-context-bar ${fillPct == null ? "task-context-bar--empty" : ""}`}>
                         <i className={tone ? `task-context-fill--${tone}` : undefined} style={fillPct != null ? { width: `${fillPct}%` } : undefined} />
