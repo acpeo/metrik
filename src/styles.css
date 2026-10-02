@@ -6921,6 +6921,36 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-light .task-chain-hop--current .task-chain-glyph { color: #1f7a4d; }
 .widget-shell--transparent.widget-shell--glass-light .task-chain-hop--failed .task-chain-glyph { color: #a1402e; }
 
+/* ── 深色 HUD 玻璃上的迷你条与链路墨色 ─────────────────────────
+   基础 .widget-shell 的墨是浅玻璃用的深墨；迷你条/链路是新元素，
+   不补覆盖就会深字贴深玻璃（2026-10-02 用户深色截图：标题全隐）。
+   作用域与任务 pill 的深档覆盖一致。 */
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini {
+  color: rgba(255, 255, 255, 0.92);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini-row small,
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini-empty,
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini-more,
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini--vertical .tasks-mini-cell small {
+  color: rgba(255, 255, 255, 0.58);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-chain {
+  color: rgba(255, 255, 255, 0.8);
+}
+/* 迷你条里的 strip-button 在深色 HUD 上（原覆盖只挂在 .strip-shell 下，够不到这） */
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini .strip-button {
+  color: rgba(255, 255, 255, 0.62);
+  background: transparent;
+}
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini .strip-button:hover,
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini .strip-button--active {
+  color: rgba(255, 255, 255, 0.96);
+  background: rgba(255, 255, 255, 0.14);
+}
+
 /* ── 任务小组件三档外观（跟随原项目的深色/浅色/透明档）────────────── */
 
 /* 浅色玻璃：卡面用 glass-light 的白 0.36 + 深色发丝描边；墨色继承壳的深墨 */
