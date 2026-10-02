@@ -1784,12 +1784,22 @@ async function onGlassTintChanged(handler) {
   return listen("metrik://glass-tint", () => handler());
 }
 
-/// 任务追踪小组件：独立小窗开关（已开着则关闭）。非桌面环境 no-op。
-async function toggleTasksWidgetWindow() {
+/// 任务追踪独立小组件：显隐开关（幂等——窗已存在只 show/hide，绝不销毁重建，
+/// 0.20.6 实测同 label 重建会永久失效）。可见性变化由 Rust 侧广播
+/// tasks://tasks-widget-visibility，设置勾选与自启开关由监听方同步。
+async function setTasksWidgetWindow(visible) {
   if (!isDesktop()) return;
-  await invoke("toggle_tasks_widget_window").catch((error) => {
-    console.warn("Unable to toggle the tasks widget window.", error);
+  await invoke("set_tasks_widget_window", { visible }).catch((error) => {
+    console.warn("Unable to set the tasks widget window.", error);
   });
+}
+
+/// 任务小组件显隐变化的跨窗口广播（托盘切换/自身关闭都会走）；
+/// emit 会回到发送方自己，监听方要幂等。非桌面环境 no-op。
+async function onTasksWidgetVisibility(handler) {
+  if (!isDesktop()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("tasks://tasks-widget-visibility", (event) => handler(Boolean(event.payload)));
 }
 
 /// 主窗口唤到前台并切完整视图（任务小组件底栏的"完整视图"用）。
@@ -1904,6 +1914,7 @@ export {
   onScaleFactorChanged,
   onTrayPinnedChange,
   onTrayShowExpanded,
+  onTasksWidgetVisibility,
   openExpandedWindow,
   readStripScale,
   readUiScale,
@@ -1919,7 +1930,7 @@ export {
   updateTrayQuotaBadge,
   setStripScale,
   setWindowGlass,
-  toggleTasksWidgetWindow,
+  setTasksWidgetWindow,
   showMainExpanded,
   closeCurrentWindow,
   emitGlassTint,

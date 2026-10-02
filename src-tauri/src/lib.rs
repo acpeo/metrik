@@ -1423,18 +1423,15 @@ fn open_expanded_window(app: tauri::AppHandle, nav: Option<String>) -> Result<()
     }
 }
 
-/// 任务追踪小组件：独立小窗（index.html?view=tasks）。已开着则关闭——前端把它当开关用。
-/// 这是 Windows 上第一扇运行时创建的附窗；透明/无边框与主窗口同一套参数。
-/// 必须是 async command：sync command 跑在主线程，而建窗要等事件循环腾出手，
-/// 主线程却在等命令返回——0.20.5 实测点按钮整个应用冻结（Tauri Windows 经典死锁）。
-#[tauri::command]
-async fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("tasks-widget") {
-        let _ = window.close();
-        return Ok(());
-    }
+/// 任务小组件显隐广播：独立后它有自己的生命周期，托盘/设置/自身关闭三条路
+/// 都汇到这里广播，前端据以同步设置勾选与自启开关（监听方要幂等——emit 会回到发送方）。
+const TASK_WIDGET_VISIBILITY: &str = "tasks://tasks-widget-visibility";
+
+/// 首次创建任务小组件窗（仅在 label 未被占用时调用）。
+/// 透明/无边框与主窗口同一套参数。
+fn spawn_tasks_widget_window(app: &tauri::AppHandle) -> Result<(), String> {
     let mut builder = tauri::WebviewWindowBuilder::new(
-        &app,
+        app,
         "tasks-widget",
         tauri::WebviewUrl::App("index.html?view=tasks".into()),
     )
@@ -1465,6 +1462,33 @@ async fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String>
         }
     }
     builder.build().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// 任务小组件显隐开关（幂等）：窗已存在就只 show/hide，绝不销毁重建——
+/// 0.20.6 实测同一 label 首建成功后，关掉再建就再也弹不出来，常驻显隐
+/// 生命周期同时绕开该坑（隐藏的窗不轮询，零开销）。必须 async command：
+/// sync command 跑在主线程，建窗要等事件循环腾出手、主线程却在等命令
+/// 返回——Windows 经典死锁（0.20.5 教训）。
+#[tauri::command]
+async fn set_tasks_widget_window(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+    match app.get_webview_window("tasks-widget") {
+        Some(window) => {
+            if visible {
+                let _ = window.unminimize();
+                let _ = window.show();
+            } else {
+                let _ = window.hide();
+            }
+        }
+        None => {
+            if visible {
+                spawn_tasks_widget_window(&app)?;
+            }
+        }
+    }
+    use tauri::Emitter;
+    let _ = app.emit(TASK_WIDGET_VISIBILITY, visible);
     Ok(())
 }
 
@@ -1600,14 +1624,15 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
     let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
     let expanded = MenuItem::with_id(app, "expanded", "完整视图", true, None::<&str>)?;
+    let tasks_widget = MenuItem::with_id(app, "tasks-widget", "任务小组件", true, None::<&str>)?;
     #[cfg(target_os = "linux")]
     let pinned = MenuItem::with_id(app, "pinned", "置顶", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "退出 Metrik", true, None::<&str>)?;
     #[cfg(target_os = "linux")]
-    let menu = Menu::with_items(app, &[&toggle, &expanded, &pinned, &separator, &quit])?;
+    let menu = Menu::with_items(app, &[&toggle, &expanded, &tasks_widget, &pinned, &separator, &quit])?;
     #[cfg(not(target_os = "linux"))]
-    let menu = Menu::with_items(app, &[&toggle, &expanded, &separator, &quit])?;
+    let menu = Menu::with_items(app, &[&toggle, &expanded, &tasks_widget, &separator, &quit])?;
 
     #[cfg(target_os = "linux")]
     if let Ok(mut item) = app.state::<LinuxTrayPinMenu>().item.lock() {
@@ -1634,6 +1659,19 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                     }
                 }
                 let _ = app.emit(TRAY_SHOW_EXPANDED, ());
+            }
+            // 任务小组件是独立常驻窗，托盘做显隐切换。建窗不能在托盘回调
+            // （主线程事件循环内）同步做——扔进异步运行时；set 内部已存在
+            // 只显隐、不存在才建，并广播可见性给前端同步勾选。
+            "tasks-widget" => {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let visible = handle
+                        .get_webview_window("tasks-widget")
+                        .map(|window| window.is_visible().unwrap_or(false))
+                        .unwrap_or(false);
+                    let _ = set_tasks_widget_window(handle, !visible).await;
+                });
             }
             #[cfg(target_os = "linux")]
             "pinned" => {
@@ -2037,7 +2075,7 @@ pub fn run() {
             gateway_task_snapshot,
             gateway_task_list,
             gateway_agents_snapshot,
-            toggle_tasks_widget_window,
+            set_tasks_widget_window,
             show_main_expanded
         ])
         .run(tauri::generate_context!())

@@ -108,6 +108,7 @@ import {
   onScaleFactorChanged,
   onTrayPinnedChange,
   onTrayShowExpanded,
+  onTasksWidgetVisibility,
   openExpandedWindow,
   readStripScale,
   readUiScale,
@@ -123,9 +124,8 @@ import {
   updateMacStatusItems,
   updateTrayQuotaBadge,
   setWindowGlass,
-  toggleTasksWidgetWindow,
+  setTasksWidgetWindow,
   showMainExpanded,
-  closeCurrentWindow,
   emitGlassTint,
   onGlassTintChanged,
   resizeCurrentWindow,
@@ -1878,79 +1878,10 @@ function taskAccentClass(status) {
   return "widget-task-accent--ended";
 }
 
-/// 桌面小组件的"任务追踪"卡片：实时指示 + 运行中任务 + 活跃 Agent。
-/// 常驻在用量行下方；点击头部直达完整任务页。
-function WidgetTasksCard({ feed, onOpenTasks }) {
-  const tasks = feed.tasks?.tasks || [];
-  const active = tasks.filter(isActiveTask);
-  const shown = active.slice(0, 3);
-  const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
-  const now = Date.now();
-  const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
-  return (
-    <section className="widget-tasks" aria-label="Gateway 任务追踪">
-      <button type="button" className="widget-tasks-head" onClick={onOpenTasks} title="打开任务小组件">
-        <span className={feed.live ? "live-indicator live-indicator--on" : "live-indicator"}>
-          <span className="live-dot" />
-          {feed.live ? "实时" : "未同步"}
-        </span>
-        <strong>任务</strong>
-        <span className="widget-tasks-count">{active.length} 运行中</span>
-        <ArrowsOutSimple size={13} weight="light" aria-hidden="true" />
-      </button>
-      {shown.map((task) => {
-        const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
-        const stale = now - lastSeen > staleMs;
-        // 迷你卡片塞不下进度行，进度挪进悬停提示。
-        const progressTip =
-          task.status === "running" && task.progressSummary ? `正在：${task.progressSummary}` : null;
-        return (
-          <div className="widget-task-row" key={`${task.gateway}:${task.taskId}`}>
-            <i className={`widget-task-accent ${taskAccentClass(task.status)}`} aria-hidden="true" />
-            <span className="widget-task-main">
-              <TaskStatusPill status={task.status} />
-              {stale && <span className="task-pill task-pill--stale">卡?</span>}
-              <span
-                className="widget-task-title"
-                title={[task.title || task.taskId, progressTip].filter(Boolean).join("\n")}
-              >
-                {task.title || task.taskId}
-              </span>
-            </span>
-            <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
-          </div>
-        );
-      })}
-      {active.length === 0 && (
-        <p className="widget-tasks-empty">{tasks.length ? "暂无进行中任务" : "等待首次同步…"}</p>
-      )}
-      {agents.length > 0 && (
-        <div className="widget-tasks-agents">
-          {agents.slice(0, 4).map((agent) => {
-            const lastSeen = Number.isFinite(agent.lastActiveMs) ? agent.lastActiveMs : 0;
-            const shortId = agent.agentId.includes(":")
-              ? agent.agentId.slice(agent.agentId.indexOf(":") + 1)
-              : agent.agentId;
-            return (
-              <span
-                key={agent.agentId}
-                className={`widget-agent-chip ${now - lastSeen > staleMs ? "widget-agent-chip--stale" : ""}`}
-                title={lastSeen ? `最近活动 ${formatTaskAge(lastSeen)}` : "活跃中"}
-              >
-                <i className="agent-status-dot" aria-hidden="true" />
-                {agent.name || shortId}
-              </span>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/// 任务追踪小组件：独立小窗。外壳与桌面小组件同一套玻璃 token（原项目视觉），
+/// 任务追踪小组件：独立常驻小窗（与主窗完全分离，托盘/设置可显隐）。
+/// 外壳与桌面小组件同一套玻璃 token（原项目视觉），
 /// 内容 = 实时指示 + 运行中/近期任务 + 活跃 Agent 星位 + 底栏（完整视图 / 关闭）。
-/// 数据源与用量小组件上的任务卡片共用同一条轮询（useWidgetTasksFeed）。
+/// 数据源为本窗自持的 useWidgetTasksFeed 轮询；"关闭"= 隐藏 + 关自启开关。
 function TasksWidgetWindow({
   feed,
   transparent,
@@ -2524,7 +2455,6 @@ function CompactWidget({
   quotaAgent,
   onCycleQuotaAgent,
   widgetAgents,
-  tasksSlot,
   glassAlpha = 0.82,
   availableUpdate,
   onOpenUpdate,
@@ -2860,8 +2790,6 @@ function CompactWidget({
             });
           })()}
         </section>
-
-        {tasksSlot}
 
         <footer className="widget-footer">
           <button
@@ -4220,10 +4148,12 @@ function MonitorSettingsCard() {
               const next = event.target.checked;
               localStorage.setItem("metrik:tasksWidget", next ? "on" : "off");
               setWidgetTasks(next);
+              // 独立小组件：勾选即开/关那扇常驻窗（幂等），不等下次启动。
+              setTasksWidgetWindow(next);
               window.dispatchEvent(new Event("metrik-monitor-changed"));
             }}
           />
-          <span>在桌面小组件显示任务卡片</span>
+          <span>在桌面显示任务小组件（独立小窗）</span>
         </label>
         <button
           type="button"
@@ -6412,10 +6342,29 @@ export function App() {
     window.addEventListener("metrik-monitor-changed", handler);
     return () => window.removeEventListener("metrik-monitor-changed", handler);
   }, []);
-  const widgetTasksFeed = useWidgetTasksFeed(
-    gateways,
-    tasksWidgetEnabled && (viewMode === "compact" || viewMode === "tasks-widget"),
-  );
+  // 任务小组件显隐以 Rust 侧为准（托盘切换/自身关闭/设置勾选三条路都广播）；
+  // 这里同步勾选态并把自启开关写进 localStorage（emit 会回到发送方，监听须幂等）。
+  useEffect(() => {
+    const stopPromise = onTasksWidgetVisibility((visible) => {
+      setTasksWidgetEnabled(visible);
+      localStorage.setItem("metrik:tasksWidget", visible ? "on" : "off");
+    });
+    return () => {
+      stopPromise.then((stop) => stop?.());
+    };
+  }, []);
+  // 独立常驻：设置开着且已配网关 → 启动时把任务小窗带起来（set 幂等，
+  // 已存在只 show，绝不重建）。任务小窗自身不触发（它就是要被带起的那扇窗）。
+  useEffect(() => {
+    if (viewMode === "tasks-widget") return undefined;
+    if (localStorage.getItem("metrik:tasksWidget") === "off") return undefined;
+    if (!gateways.length) return undefined;
+    setTasksWidgetWindow(true);
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 任务小组件独立后，主窗不再轮询任务/星位数据——只有任务小窗自己拉。
+  const widgetTasksFeed = useWidgetTasksFeed(gateways, viewMode === "tasks-widget");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pinned, setPinned] = useState(() => localStorage.getItem("metrik:pinned") === "true");
   const [pinnedHoverMode, setPinnedHoverMode] = useState(() =>
@@ -7330,7 +7279,7 @@ export function App() {
         glassAlpha={shellGlassAlpha}
         onCycleAppearance={handleToggleTransparent}
         onOpenExpanded={() => runWindowAction(() => showMainExpanded())}
-        onClose={() => runWindowAction(() => closeCurrentWindow())}
+        onClose={() => runWindowAction(() => setTasksWidgetWindow(false))}
       />
     );
   }
@@ -7383,14 +7332,6 @@ export function App() {
           quotaAgent={activeQuotaAgent}
           onCycleQuotaAgent={handleCycleQuotaAgent}
           widgetAgents={widgetAgents}
-          tasksSlot={
-            tasksWidgetEnabled && gateways.length ? (
-              <WidgetTasksCard
-                feed={widgetTasksFeed}
-                onOpenTasks={() => runWindowAction(() => toggleTasksWidgetWindow())}
-              />
-            ) : null
-          }
           glassAlpha={shellGlassAlpha}
           availableUpdate={availableUpdate}
           onOpenUpdate={handleOpenUpdate}
