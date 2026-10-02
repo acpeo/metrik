@@ -181,13 +181,44 @@ export async function loadAgentsSnapshot(gateways) {
         sessionCount: index < 3 ? 1 : 0,
         runningTasks: index < 3 ? 1 : 0,
       })),
+      // 演示会话用量：北斗接力跳 = 群会话（真机形态 agent:<id>:feishu:group:oc_*）。
+      sessions: [
+        {
+          key: "VPS-北斗:agent:tianshu:main",
+          gateway: "VPS-北斗",
+          agentId: "tianshu",
+          isGroup: false,
+          model: "gpt-6",
+          contextTokens: 525000,
+          estimatedPromptTokens: 154174,
+          contextTokenBudget: 525000,
+          promptMessageCount: 128,
+          shouldCompact: false,
+          hasActiveRun: false,
+          updatedAt: now - 60_000,
+        },
+        ...stars.slice(1).map((star, index) => ({
+          key: `VPS-北斗:agent:${star.id}:feishu:group:oc_b15d1b110f2473c56fd31373fc88da6a`,
+          gateway: "VPS-北斗",
+          agentId: star.id,
+          isGroup: true,
+          model: "gpt-6",
+          contextTokens: 525000,
+          estimatedPromptTokens: index < 2 ? 40_000 + index * 35_000 : null,
+          contextTokenBudget: 525000,
+          promptMessageCount: index < 2 ? 18 + index * 22 : null,
+          shouldCompact: false,
+          hasActiveRun: index === 0,
+          updatedAt: now - (index < 3 ? index * 4000 : 40 * 60_000),
+        })),
+      ],
     };
   }
   try {
-    const agents = await invoke("gateway_agents_snapshot", { gateways });
-    return { demo: false, agents };
+    const payload = await invoke("gateway_agents_snapshot", { gateways });
+    return { demo: false, agents: payload?.agents ?? [], sessions: payload?.sessions ?? [] };
   } catch (error) {
-    return { demo: false, agents: [], loadError: String(error) };
+    return { demo: false, agents: [], sessions: [], loadError: String(error) };
   }
 }
 

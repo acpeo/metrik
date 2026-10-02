@@ -1675,6 +1675,14 @@ pub struct GatewayTaskView {
     pub error: Option<String>,
 }
 
+/// gateway_agents_snapshot 的返回：Agent 活动卡 + 会话级用量明细。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayAgentsPayload {
+    pub agents: Vec<gateway_tasks::AgentActivity>,
+    pub sessions: Vec<gateway_tasks::SessionUsage>,
+}
+
 /// 拉一次 Gateway 任务台账并落本地账本（突破官方 7 天保留）。
 /// gateways 为空时返回错误；UI 传入设置里配置的目标列表。
 #[tauri::command]
@@ -1739,12 +1747,13 @@ fn gateway_task_list(
 
 /// 拉 Agent 会话活动快照（实时监控北斗等多 Agent 协作）：
 /// 数据源 = sessions.list（各星位会话 status/hasActiveRun/updatedAt）+ agents.list。
+/// 同时返回会话级用量明细（sessions，B 链路 token/上下文数据源）。
 /// 带 2.5s 节流，与前端 3s 刷新节奏对齐。
 #[tauri::command]
 async fn gateway_agents_snapshot(
     gateways: Vec<GatewayTargetConfig>,
     state: State<'_, AppState>,
-) -> Result<Vec<gateway_tasks::AgentActivity>, String> {
+) -> Result<GatewayAgentsPayload, String> {
     let database_path = state.database_path.clone();
     let scan_gate = Arc::clone(&state.scan_gate);
 
@@ -1755,6 +1764,7 @@ async fn gateway_agents_snapshot(
         let connection =
             storage::open_database(&database_path).map_err(|error| error.to_string())?;
         let mut merged: Vec<gateway_tasks::AgentActivity> = Vec::new();
+        let mut merged_sessions: Vec<gateway_tasks::SessionUsage> = Vec::new();
         for target in &gateways {
             let gw = gateway_tasks::GatewayTarget {
                 label: target.label.clone(),
@@ -1788,12 +1798,20 @@ async fn gateway_agents_snapshot(
                             merged.push(agent);
                         }
                     }
+                    for mut session in snapshot.sessions {
+                        // 跨网关 key 防撞：会话 key 加网关标签前缀。
+                        session.key = format!("{}:{}", target.label, session.key);
+                        merged_sessions.push(session);
+                    }
                 }
                 Err(_) => { /* 单网关失败不阻塞其它网关 */ }
             }
         }
         let _ = connection;
-        Ok(merged)
+        Ok(GatewayAgentsPayload {
+            agents: merged,
+            sessions: merged_sessions,
+        })
     })
     .await
     .map_err(|error| format!("agents snapshot failed: {error}"))?

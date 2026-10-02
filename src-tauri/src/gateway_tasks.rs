@@ -537,6 +537,41 @@ pub struct AgentsSnapshot {
     #[allow(dead_code)] // 预留给后续 UI 显示"更新于"时间戳
     pub collected_at_ms: i64,
     pub agents: Vec<AgentActivity>,
+    /// 会话级用量/上下文明细（B 链路：token 用量与上下文水位的数据源）。
+    pub sessions: Vec<SessionUsage>,
+}
+
+/// 单个会话的用量快照（sessions.list 字段子集）。
+/// 实测（2026-10-02）：input/output/totalTokens 依赖网关 effectiveResponseUsage
+/// 开关（北斗 VPS 关闭时恒为 0）；上下文水位 estimatedPromptTokens/
+/// contextTokenBudget 只在跑过 run 的会话上携带，空闲会话缺失。
+#[derive(Clone, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUsage {
+    pub key: String,
+    pub gateway: String,
+    pub agent_id: Option<String>,
+    /// 是否群会话（北斗接力跳所在形态：agent:<id>:feishu:group:<chatId>）。
+    pub is_group: bool,
+    pub model: Option<String>,
+    pub model_provider: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub context_tokens: Option<i64>,
+    /// 当前上下文填充估算（pre-prompt-estimate，空闲会话缺省）。
+    pub estimated_prompt_tokens: Option<i64>,
+    /// 上下文预算（模型窗口 - 预留）。
+    pub context_token_budget: Option<i64>,
+    pub prompt_message_count: Option<i64>,
+    pub should_compact: Option<bool>,
+    pub has_active_run: bool,
+    pub status: Option<String>,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub runtime_ms: Option<i64>,
+    pub updated_at: Option<i64>,
+    pub subject: Option<String>,
 }
 
 /// 拉 Agent 活动快照。
@@ -579,6 +614,7 @@ pub fn fetch_agents_snapshot(target: &GatewayTarget) -> Result<AgentsSnapshot> {
 
     // 会话归集：key 形如 agent:<agentId>[:subagent:...]。主会话与 subagent
     // 会话都计入所属 Agent 的活动。
+    let mut session_usages: Vec<SessionUsage> = Vec::new();
     if let Some(sessions) = sessions_payload.get("sessions").and_then(Value::as_array) {
         for session in sessions {
             let key = session.get("key").and_then(Value::as_str).unwrap_or("");
@@ -611,12 +647,73 @@ pub fn fetch_agents_snapshot(target: &GatewayTarget) -> Result<AgentsSnapshot> {
                 agent.running_tasks += 1;
                 agent.active = true;
             }
+
+            // B 链路：用量/上下文字段提取（缺省字段留 None，前端显示"—"）。
+            let budget = session.get("contextBudgetStatus");
+            session_usages.push(SessionUsage {
+                key: key.to_owned(),
+                gateway: target.label.clone(),
+                agent_id: Some(agent_id.to_owned()),
+                is_group: session.get("peerKind").and_then(Value::as_str) == Some("group")
+                    || key.contains(":feishu:group:"),
+                model: session
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                model_provider: session
+                    .get("modelProvider")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                input_tokens: session
+                    .get("inputTokens")
+                    .and_then(Value::as_i64),
+                output_tokens: session
+                    .get("outputTokens")
+                    .and_then(Value::as_i64),
+                total_tokens: session
+                    .get("totalTokens")
+                    .and_then(Value::as_i64),
+                context_tokens: session
+                    .get("contextTokens")
+                    .and_then(Value::as_i64),
+                estimated_prompt_tokens: budget
+                    .and_then(|b| b.get("estimatedPromptTokens"))
+                    .and_then(Value::as_i64),
+                context_token_budget: budget
+                    .and_then(|b| b.get("contextTokenBudget"))
+                    .and_then(Value::as_i64)
+                    .or_else(|| {
+                        session
+                            .get("contextTokens")
+                            .and_then(Value::as_i64)
+                    }),
+                prompt_message_count: budget
+                    .and_then(|b| b.get("messageCount"))
+                    .and_then(Value::as_i64),
+                should_compact: budget
+                    .and_then(|b| b.get("shouldCompact"))
+                    .and_then(Value::as_bool),
+                has_active_run: has_active_run || status_running,
+                status: session
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                started_at: session.get("startedAt").and_then(Value::as_i64),
+                ended_at: session.get("endedAt").and_then(Value::as_i64),
+                runtime_ms: session.get("runtimeMs").and_then(Value::as_i64),
+                updated_at: session.get("updatedAt").and_then(Value::as_i64),
+                subject: session
+                    .get("subject")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            });
         }
     }
 
     Ok(AgentsSnapshot {
         collected_at_ms: chrono::Utc::now().timestamp_millis(),
         agents,
+        sessions: session_usages,
     })
 }
 

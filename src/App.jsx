@@ -51,7 +51,7 @@ import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
 import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
-import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor } from "./taskChains.js";
+import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, selectUsageSessions } from "./taskChains.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow, isBalanceWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -1980,6 +1980,11 @@ function TasksWidgetWindow({
   );
   const recent = recentlyEnded.slice(0, 6);
   const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
+  // 星位上下文（B 链路）：sessions.list 的会话级用量（选择逻辑在 taskChains.js）。
+  const usageSessions = useMemo(
+    () => selectUsageSessions(feed.agents?.sessions),
+    [feed.agents],
+  );
   const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
   const shellAppearance = glassShellAppearance("widget", {
     transparent,
@@ -2364,6 +2369,49 @@ function TasksWidgetWindow({
                 );
               })}
             </div>
+          )}
+          {usageSessions.length > 0 && (
+            <>
+              <p className="tasks-window-divider">星位上下文</p>
+              <div className="tasks-usage-list">
+                {usageSessions.map((session) => {
+                  const name = agentDisplayName(agentNameMap, session.agentId) || session.agentId || session.key;
+                  const running = Boolean(session.hasActiveRun);
+                  const estimate = Number.isFinite(session.estimatedPromptTokens) ? session.estimatedPromptTokens : null;
+                  const budget = Number.isFinite(session.contextTokenBudget) ? session.contextTokenBudget : null;
+                  const fillPct = estimate != null && budget > 0 ? Math.min(100, Math.round((estimate / budget) * 100)) : null;
+                  const tone = session.shouldCompact || (fillPct != null && fillPct >= 80) ? "warn" : "";
+                  const nums =
+                    estimate != null && budget != null
+                      ? `${formatCompactTokens(estimate)} / ${formatCompactTokens(budget)}`
+                      : budget != null
+                        ? `预算 ${formatCompactTokens(budget)}`
+                        : "—";
+                  const msgs = Number.isFinite(session.promptMessageCount) ? session.promptMessageCount : null;
+                  const lastSeen = Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
+                  return (
+                    <div
+                      key={session.key}
+                      className="tasks-usage-row"
+                      title={`${session.key}\n${estimate != null ? `上下文 ${estimate.toLocaleString()} tok` : "空闲会话，无上下文估算"}${budget != null ? ` · 预算 ${budget.toLocaleString()} tok` : ""}${msgs != null ? ` · ${msgs} 条消息` : ""}${lastSeen ? `\n最近活动 ${formatTaskAge(lastSeen)}` : ""}`}
+                    >
+                      <i className={`agent-status-dot tasks-usage-dot ${running ? "" : "tasks-usage-dot--idle"}`} aria-hidden="true" />
+                      <span className="tasks-usage-name">
+                        {name}
+                        {session.isGroup ? <em>群</em> : null}
+                      </span>
+                      <span className={`task-context-bar ${fillPct == null ? "task-context-bar--empty" : ""}`}>
+                        <i className={tone ? `task-context-fill--${tone}` : undefined} style={fillPct != null ? { width: `${fillPct}%` } : undefined} />
+                      </span>
+                      <span className="tasks-usage-nums">
+                        {nums}
+                        {msgs != null ? <small>{msgs}条</small> : null}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
       </div>
@@ -5559,6 +5607,14 @@ function formatTaskAge(ms) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} 小时前`;
   return `${Math.floor(hours / 24)} 天前`;
+}
+
+/// 紧凑 token 数：154174 → "154k"、525000 → "525k"、2.4M → "2.40M"。
+function formatCompactTokens(n) {
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1000) return String(Math.round(n));
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
 function formatTaskDuration(startedMs, endedMs) {

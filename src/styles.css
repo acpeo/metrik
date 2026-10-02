@@ -6614,6 +6614,99 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   padding: 0 12px;
 }
 
+/* ── 星位上下文（B 链路）：sessions.list 会话级用量行 ─────────────────
+   布局跟任务行同一张网格语言：点 | 名字 | 水位条 | 数字。 */
+.tasks-usage-list {
+  padding: 4px 11px 8px;
+}
+
+.tasks-usage-row {
+  display: grid;
+  grid-template-columns: 10px 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 3.5px 0;
+}
+
+.tasks-usage-dot {
+  width: 6px;
+  height: 6px;
+}
+
+/* 行不在 .agent-card--active 上下文里，活跃呼吸自己带。 */
+.tasks-usage-dot:not(.tasks-usage-dot--idle) {
+  background: #6fc49a;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+.tasks-usage-dot--idle {
+  animation: none !important;
+}
+
+.tasks-usage-name {
+  font-size: 11px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  opacity: 0.92;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tasks-usage-name em {
+  margin-left: 3px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.09);
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 500;
+  opacity: 0.7;
+  vertical-align: 1px;
+}
+
+/* 水位条：2px 高发丝条，绿=健康，黄=80%+ 或建议压缩；无估算时空槽。 */
+.task-context-bar {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.task-context-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: #6fc49a;
+  opacity: 0.75;
+  transition: width 400ms ease;
+}
+
+.task-context-bar i.task-context-fill--warn {
+  background: #e8b04a;
+  opacity: 0.9;
+}
+
+.task-context-bar--empty i {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.tasks-usage-nums {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.62;
+  white-space: nowrap;
+}
+
+.tasks-usage-nums small {
+  font-size: 9px;
+  opacity: 0.8;
+}
+
 /* 独立任务窗的 footer 不在 .widget-content 里（拿不到它的 10px 内距），自己补齐。
    对齐方式跟原版 footer 一致用垂直居中——基线对齐在"中文+数字"混排下数字会显浮
    （2026-10-02 用户对照原版截图纠正）。 */
@@ -7101,6 +7194,22 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-light .widget-agent-chip {
   border-color: rgba(31, 33, 36, 0.14);
   background: rgba(255, 255, 255, 0.5);
+}
+/* 星位上下文行：浅色档状态色与发丝条对齐浅面板 token */
+.widget-shell--transparent.widget-shell--glass-light .tasks-usage-dot:not(.tasks-usage-dot--idle) {
+  background: #1f7a4d;
+}
+.widget-shell--transparent.widget-shell--glass-light .task-context-bar {
+  background: rgba(31, 33, 36, 0.1);
+}
+.widget-shell--transparent.widget-shell--glass-light .task-context-bar i {
+  background: #1f7a4d;
+}
+.widget-shell--transparent.widget-shell--glass-light .task-context-bar i.task-context-fill--warn {
+  background: #8f681f;
+}
+.widget-shell--transparent.widget-shell--glass-light .task-context-bar--empty i {
+  background: rgba(31, 33, 36, 0.22);
 }
 
 /* 透明档（深墨）：不铺卡面，只留深色发丝内描边——与原项目 clear 档同规 */

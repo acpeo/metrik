@@ -6,6 +6,7 @@ import {
   buildAgentNameMap,
   buildTaskChains,
   chainHopsFor,
+  selectUsageSessions,
 } from "./taskChains.js";
 
 const task = (overrides) => ({
@@ -84,4 +85,26 @@ test("agent name map resolves both gateway-prefixed and short agent ids", () => 
   assert.equal(agentDisplayName(map, "tianshu"), "天枢");
   assert.equal(agentDisplayName(map, "unknown"), "unknown");
   assert.equal(agentDisplayName(map, undefined), "");
+});
+
+test("usage sessions drop cron/idless sessions, sort by recency, cap at limit", () => {
+  const sessions = [
+    { key: "agent:tianshu:cron:cb75:run:e1", updatedAt: 900 },
+    { key: "agent:yaoguang:feishu:group:oc_b15", updatedAt: 100 },
+    { key: "agent:tianshu:main", updatedAt: 300 },
+    { key: "agent:tianxuan:feishu:group:oc_b15", updatedAt: 200 },
+    { key: "agent:tianji:feishu:group:oc_b15" }, // 无 updatedAt：空闲脏数据，剔除
+    { key: "", updatedAt: 50 }, // 无 key，剔除
+    null,
+  ];
+  const picked = selectUsageSessions(sessions, { limit: 2 });
+  assert.deepEqual(picked.map((session) => session.key), [
+    "agent:tianshu:main",
+    "agent:tianxuan:feishu:group:oc_b15",
+  ]);
+});
+
+test("usage sessions tolerate null/undefined input", () => {
+  assert.deepEqual(selectUsageSessions(null), []);
+  assert.deepEqual(selectUsageSessions(undefined), []);
 });

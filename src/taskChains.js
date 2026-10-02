@@ -83,3 +83,14 @@ export function chainHopsFor(task, { childOf, parentOf, groups }) {
   hops.sort((a, b) => startedMsOf(a) - startedMsOf(b));
   return hops;
 }
+
+/// 星位上下文（B 链路）展示集：sessions.list 会话里挑出该给用户看的。
+/// cron 会话（心跳/巡检）与无 updatedAt 的会话不进；按最近活动排序，最多 limit 条。
+export function selectUsageSessions(sessions, { limit = 8 } = {}) {
+  const list = (sessions ?? []).filter(
+    (session) =>
+      session && session.key && !session.key.includes(":cron:") && session.updatedAt,
+  );
+  list.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  return list.slice(0, limit);
+}
