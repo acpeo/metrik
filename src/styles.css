@@ -7108,9 +7108,11 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   box-shadow: 0 1px rgba(255, 255, 255, 0.08);
 }
 
-/* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮横移 */
+/* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮横移。
+   字号回展开卡原档 10.5px（迷你条的 13px 是胶囊尺寸，别带进来）。 */
 .task-chain .tasks-mini-strip {
   cursor: default;
+  font-size: 10.5px;
 }
 
 .task-chain-hop {
