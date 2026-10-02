@@ -7114,13 +7114,14 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 /* 有链路的任务：行 + 链路同组，组底线替代行底线——链路在行与本组分隔线之间，
-   不被任务行的底线隔在外面。 */
+   不被任务行的底线隔在外面。压制规则要压过下面 glass-light/clear/ink 变体
+   （同 (0,3,0) 会输给文件更靠后的变体），故挂到 .tasks-window-body 提到 (0,4,0)。 */
 .widget-task-group {
   box-shadow: 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .widget-task-group .widget-task-row,
-.widget-shell--transparent .widget-task-group .widget-task-row {
+.widget-shell--transparent .tasks-window-body .widget-task-group .widget-task-row {
   box-shadow: none;
 }
 
