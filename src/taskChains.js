@@ -85,8 +85,9 @@ export function chainHopsFor(task, { childOf, parentOf, groups }) {
 }
 
 /// 星位上下文（B 链路）展示集：sessions.list 会话里挑出该给用户看的。
-/// cron 会话（心跳/巡检）与无 updatedAt 的会话不进；按最近活动排序，最多 limit 条。
-export function selectUsageSessions(sessions, { limit = 8 } = {}) {
+/// cron 会话（心跳/巡检）与无 updatedAt 的会话不进；按最近活动排序，最多 limit 条
+/// （真机北斗 = 7 个群会话 + 每星位主会话，10 够用且留余量）。
+export function selectUsageSessions(sessions, { limit = 10 } = {}) {
   const list = (sessions ?? []).filter(
     (session) =>
       session && session.key && !session.key.includes(":cron:") && session.updatedAt,

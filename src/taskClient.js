@@ -197,7 +197,7 @@ export async function loadAgentsSnapshot(gateways) {
           hasActiveRun: false,
           updatedAt: now - 60_000,
         },
-        ...stars.slice(1).map((star, index) => ({
+        ...stars.map((star, index) => ({
           key: `VPS-北斗:agent:${star.id}:feishu:group:oc_b15d1b110f2473c56fd31373fc88da6a`,
           gateway: "VPS-北斗",
           agentId: star.id,

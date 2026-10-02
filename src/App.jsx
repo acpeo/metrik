@@ -1979,7 +1979,6 @@ function TasksWidgetWindow({
     (task) => task.status !== "running" && task.status !== "queued" && now - taskEndedAt(task) < recentWindowMs,
   );
   const recent = recentlyEnded.slice(0, 6);
-  const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
   // 星位上下文（B 链路）：sessions.list 的会话级用量（选择逻辑在 taskChains.js）。
   const usageSessions = useMemo(
     () => selectUsageSessions(feed.agents?.sessions),
@@ -2350,26 +2349,6 @@ function TasksWidgetWindow({
           ))}
           {active.length > 0 && recent.length > 0 && <p className="tasks-window-divider">近期完成</p>}
           {recent.map((task) => renderBriefRow(task))}
-          {agents.length > 0 && (
-            <div className="widget-tasks-agents">
-              {agents.slice(0, 6).map((agent) => {
-                const lastSeen = Number.isFinite(agent.lastActiveMs) ? agent.lastActiveMs : 0;
-                const shortId = agent.agentId.includes(":")
-                  ? agent.agentId.slice(agent.agentId.indexOf(":") + 1)
-                  : agent.agentId;
-                return (
-                  <span
-                    key={agent.agentId}
-                    className={`widget-agent-chip ${now - lastSeen > staleMs ? "widget-agent-chip--stale" : ""}`}
-                    title={lastSeen ? `最近活动 ${formatTaskAge(lastSeen)}` : "活跃中"}
-                  >
-                    <i className="agent-status-dot" aria-hidden="true" />
-                    {agent.name || shortId}
-                  </span>
-                );
-              })}
-            </div>
-          )}
           {usageSessions.length > 0 && (
             <>
               <p className="tasks-window-divider">星位上下文</p>
@@ -2389,6 +2368,8 @@ function TasksWidgetWindow({
                         : "—";
                   const msgs = Number.isFinite(session.promptMessageCount) ? session.promptMessageCount : null;
                   const lastSeen = Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
+                  // 会话形态角标：群 = 北斗矩阵群会话（接力跳所在），主 = 该星位主会话。
+                  const badge = session.isGroup ? "群" : (session.key ?? "").endsWith(":main") ? "主" : null;
                   return (
                     <div
                       key={session.key}
@@ -2398,7 +2379,7 @@ function TasksWidgetWindow({
                       <i className={`agent-status-dot tasks-usage-dot ${running ? "" : "tasks-usage-dot--idle"}`} aria-hidden="true" />
                       <span className="tasks-usage-name">
                         {name}
-                        {session.isGroup ? <em>群</em> : null}
+                        {badge ? <em>{badge}</em> : null}
                       </span>
                       <span className={`task-context-bar ${fillPct == null ? "task-context-bar--empty" : ""}`}>
                         <i className={tone ? `task-context-fill--${tone}` : undefined} style={fillPct != null ? { width: `${fillPct}%` } : undefined} />
