@@ -6441,7 +6441,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   justify-self: start;
 }
 
-.widget-task-accent--running { background: #199e70; }
+.widget-task-accent--running { background: #3aa76d; }
 .widget-task-accent--queued { background: #7fabef; }
 .widget-task-accent--failed { background: #ec8468; }
 
@@ -6510,7 +6510,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 2px 10px 6px;
+  padding: 6px 10px 6px;
 }
 
 .tasks-window-body {
@@ -6558,4 +6558,45 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .monitor-field--check input {
   accent-color: currentColor;
+}
+
+/* ── 深色玻璃壳内的任务元素配色 ─────────────────────────────────
+   .task-pill / .live-indicator 的默认配色是为完整视图的浅色面板设计的
+   （深字浅底）；小组件的深色玻璃上必须换成浅字深底，否则对比度塌掉。
+   灰阶与绿取自深色 HUD 既有 token（白 0.92/0.6、#6fc49a）。 */
+.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.75);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--running {
+  background: rgba(111, 196, 154, 0.16);
+  color: #6fc49a;
+}
+.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--queued {
+  background: rgba(127, 171, 239, 0.16);
+  color: #9ec1f5;
+}
+.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--succeeded {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.55);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--failed {
+  background: rgba(236, 132, 104, 0.16);
+  color: #ec9a80;
+}
+.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--neutral {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.5);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--stale {
+  background: rgba(224, 150, 30, 0.2);
+  color: #e0b060;
+}
+.widget-shell--transparent:not(.widget-shell--glass-light) .live-indicator {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.62);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light) .live-indicator--on {
+  background: rgba(111, 196, 154, 0.15);
+  color: #6fc49a;
 }
