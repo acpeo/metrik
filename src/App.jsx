@@ -2122,7 +2122,7 @@ function TasksWidgetWindow({
           )}
         </section>
       </div>
-      <footer className="widget-footer">
+      <footer className="widget-footer tasks-window-footer">
         <span
           className="widget-source"
           title={feed.lastSync ? `更新于 ${new Date(feed.lastSync).toLocaleTimeString("zh-CN", { hour12: false })}` : "尚未同步"}
