@@ -1763,6 +1763,27 @@ async function autostartApi() {
   return import("@tauri-apps/plugin-autostart");
 }
 
+/// 外观档位跨窗口同步：小组件窗口里切换深/浅/透明时，主窗口实时跟随。
+/// Tauri 下走全局事件（跨 WebviewWindow），浏览器预览走同窗自定义事件。
+async function emitGlassTint(value) {
+  if (!isDesktop()) {
+    window.dispatchEvent(new Event("metrik-glass-tint-changed"));
+    return;
+  }
+  const { emit } = await import("@tauri-apps/api/event");
+  await emit("metrik://glass-tint", value).catch(() => {});
+}
+
+async function onGlassTintChanged(handler) {
+  if (!isDesktop()) {
+    const h = () => handler();
+    window.addEventListener("metrik-glass-tint-changed", h);
+    return () => window.removeEventListener("metrik-glass-tint-changed", h);
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("metrik://glass-tint", () => handler());
+}
+
 /// 任务追踪小组件：独立小窗开关（已开着则关闭）。非桌面环境 no-op。
 async function toggleTasksWidgetWindow() {
   if (!isDesktop()) return;
@@ -1894,6 +1915,8 @@ export {
   toggleTasksWidgetWindow,
   showMainExpanded,
   closeCurrentWindow,
+  emitGlassTint,
+  onGlassTintChanged,
   setPinnedHoverBehavior,
   setPinnedHoverTargetOpacity,
   setWindowPinned,

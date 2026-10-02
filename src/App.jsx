@@ -123,6 +123,8 @@ import {
   toggleTasksWidgetWindow,
   showMainExpanded,
   closeCurrentWindow,
+  emitGlassTint,
+  onGlassTintChanged,
   setPinnedHoverTargetOpacity,
   setWindowPinned,
   setWindowUiScale,
@@ -1938,9 +1940,11 @@ function TasksWidgetWindow({
   glassTint,
   glassInk,
   glassAlpha,
+  onCycleAppearance,
   onOpenExpanded,
   onClose,
 }) {
+  const [pinned, setPinned] = useState(false);
   const tasks = feed.tasks?.tasks || [];
   const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
   const recent = tasks
@@ -1994,7 +1998,45 @@ function TasksWidgetWindow({
           任务追踪
         </span>
         <div className="window-actions">
-          <button type="button" className="window-action" onClick={onClose} aria-label="关闭任务小组件" title="关闭">
+          <button
+            type="button"
+            className="window-action"
+            onClick={onCycleAppearance}
+            aria-label={`外观：${glassTint === "dark" ? "深色" : glassTint === "light" ? "浅色" : "透明"}`}
+            title="切换外观（深色 / 浅色 / 透明）"
+          >
+            <CircleHalfTilt size={16} weight="light" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`window-action ${pinned ? "window-action--active" : ""}`}
+            onClick={() => {
+              const next = !pinned;
+              setPinned(next);
+              runWindowAction(() => setWindowPinned(next));
+            }}
+            aria-label={pinned ? "取消置顶" : "置顶"}
+            aria-pressed={pinned}
+            title={pinned ? "取消置顶" : "置顶"}
+          >
+            <PushPinSimple size={16} weight={pinned ? "fill" : "light"} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="window-action"
+            onClick={() => runWindowAction(minimizeWindow)}
+            aria-label="最小化"
+            title="最小化"
+          >
+            <Minus size={16} weight="light" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="window-action window-action--close"
+            onClick={onClose}
+            aria-label="关闭任务小组件"
+            title="关闭"
+          >
             <X size={15} weight="light" aria-hidden="true" />
           </button>
         </div>
@@ -5899,6 +5941,17 @@ export function App() {
     const value = normalizeGlassTint(next);
     setGlassTint(value);
     localStorage.setItem("metrik:glassTint", value);
+    // 任务小组件是独立窗口：换挡要广播，两个窗口的玻璃保持同一档。
+    emitGlassTint(value);
+  }, []);
+
+  useEffect(() => {
+    const stopPromise = onGlassTintChanged(() => {
+      setGlassTint(normalizeGlassTint(localStorage.getItem("metrik:glassTint")));
+    });
+    return () => {
+      stopPromise.then((stop) => stop?.());
+    };
   }, []);
   // 透明档的文字颜色，只在透明档生效；其它两档的前景由配色本身决定。
   const [glassInk, setGlassInk] = useState(() =>
@@ -6689,8 +6742,9 @@ export function App() {
         glassTint={glassTint}
         glassInk={glassInk}
         glassAlpha={shellGlassAlpha}
+        onCycleAppearance={handleToggleTransparent}
         onOpenExpanded={() => runWindowAction(() => showMainExpanded())}
-        onClose={() => closeCurrentWindow()}
+        onClose={() => runWindowAction(() => closeCurrentWindow())}
       />
     );
   }

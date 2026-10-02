@@ -6383,7 +6383,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 /* 深色玻璃档补白墨：任务卡片直接坐在壳上，不套列表的浅色卡底，
    继承的深墨在深色玻璃上不可见（2026-10-02 真机截图确认）。 */
-.widget-shell--transparent:not(.widget-shell--glass-light) .widget-tasks {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .widget-tasks {
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -6564,39 +6564,87 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
    .task-pill / .live-indicator 的默认配色是为完整视图的浅色面板设计的
    （深字浅底）；小组件的深色玻璃上必须换成浅字深底，否则对比度塌掉。
    灰阶与绿取自深色 HUD 既有 token（白 0.92/0.6、#6fc49a）。 */
-.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill {
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.75);
 }
-.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--running {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--running {
   background: rgba(111, 196, 154, 0.16);
   color: #6fc49a;
 }
-.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--queued {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--queued {
   background: rgba(127, 171, 239, 0.16);
   color: #9ec1f5;
 }
-.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--succeeded {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--succeeded {
   background: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.55);
 }
-.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--failed {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--failed {
   background: rgba(236, 132, 104, 0.16);
   color: #ec9a80;
 }
-.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--neutral {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--neutral {
   background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.5);
 }
-.widget-shell--transparent:not(.widget-shell--glass-light) .task-pill--stale {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--stale {
   background: rgba(224, 150, 30, 0.2);
   color: #e0b060;
 }
-.widget-shell--transparent:not(.widget-shell--glass-light) .live-indicator {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .live-indicator {
   background: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.62);
 }
-.widget-shell--transparent:not(.widget-shell--glass-light) .live-indicator--on {
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .live-indicator--on {
   background: rgba(111, 196, 154, 0.15);
   color: #6fc49a;
+}
+
+/* ── 任务小组件三档外观（跟随原项目的深色/浅色/透明档）────────────── */
+
+/* 浅色玻璃：卡面用 glass-light 的白 0.36 + 深色发丝描边；墨色继承壳的深墨 */
+.widget-shell--transparent.widget-shell--glass-light .tasks-window-body {
+  background: rgba(255, 255, 255, 0.36);
+  box-shadow:
+    0 0 0 1px rgba(31, 33, 36, 0.08),
+    inset 0 1px rgba(255, 255, 255, 0.52);
+}
+.widget-shell--transparent.widget-shell--glass-light .widget-task-row {
+  box-shadow: 0 1px rgba(31, 33, 36, 0.06);
+}
+.widget-shell--transparent.widget-shell--glass-light .widget-task-accent {
+  background: rgba(31, 33, 36, 0.22);
+}
+.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--running { background: #2f9464; }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--queued { background: #5f8fd6; }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--failed { background: #d0653f; }
+.widget-shell--transparent.widget-shell--glass-light .widget-agent-chip {
+  border-color: rgba(31, 33, 36, 0.14);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* 透明档（深墨）：不铺卡面，只留深色发丝内描边——与原项目 clear 档同规 */
+.widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .tasks-window-body {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(31, 33, 36, 0.1);
+}
+.widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .widget-task-row {
+  box-shadow: 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* 透明档（白墨）：发丝线换浅色一档 */
+.widget-shell--transparent.widget-shell--glass-ink-light .tasks-window-body {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.widget-shell--transparent.widget-shell--glass-ink-light .widget-task-row {
+  box-shadow: 0 1px rgba(255, 255, 255, 0.12);
+}
+.widget-shell--transparent.widget-shell--glass-ink-light .widget-task-accent {
+  background: rgba(255, 255, 255, 0.3);
+}
+.widget-shell--transparent.widget-shell--glass-ink-light .widget-agent-chip {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
 }
