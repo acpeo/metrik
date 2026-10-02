@@ -2323,9 +2323,9 @@ function TasksWidgetWindow({
             type="button"
             className={`window-action ${chainStyle === "timeline" ? "window-action--active" : ""}`}
             onClick={toggleChainStyle}
-            aria-label={`链路样式：${chainStyle === "timeline" ? "竖排链路" : "横排链路"}`}
+            aria-label={chainStyle === "timeline" ? "明细" : "速览"}
             aria-pressed={chainStyle === "timeline"}
-            title={`链路样式：${chainStyle === "timeline" ? "竖排链路" : "横排链路"}`}
+            title={chainStyle === "timeline" ? "明细" : "速览"}
           >
             {chainStyle === "timeline" ? (
               <TreeStructure size={16} weight="light" aria-hidden="true" />
