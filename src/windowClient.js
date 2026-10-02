@@ -1667,6 +1667,21 @@ async function onTrayPinnedChange(handler) {
   return listen("tray://set-pinned", (event) => handler(Boolean(event.payload)));
 }
 
+/// WebView2 兼容兜底：后端检测到坏运行时（>=154）会发本事件，
+/// 前端收到后把玻璃模式锁成 CSS 实心，不再依赖窗口真 Alpha。
+function onGlassFallback(handler) {
+  return listen("metrik://glass-fallback", (event) => handler(Number(event.payload)));
+}
+
+/// WebView2 ≥154 与全透明窗口合成不兼容（2026-10-01 自动分发的 154.0.4258.48 实测：
+/// 内容背景不绘制，整个窗口隐形）。UA 里的 Edg/ 版本号即 WebView2 运行时版本，
+/// 前端同步自检用——后端事件在 setup 阶段就发了，先于页面加载，监听必然错过。
+function webview2BrokenTransparency() {
+  if (!isDesktop() || !isWindowsPlatform()) return false;
+  const match = navigator.userAgent.match(/Edg\/(\d+)\./);
+  return Boolean(match && Number(match[1]) >= 154);
+}
+
 /// 从设置页变更置顶后刷新 Linux 托盘项的文字；其它平台没有该菜单。
 async function syncLinuxTrayPinned(pinned) {
   if (!isDesktop() || !isLinuxPlatform()) return;
@@ -1777,6 +1792,8 @@ export {
   updateTrayQuotaBadge,
   setStripScale,
   setWindowGlass,
+  onGlassFallback,
+  webview2BrokenTransparency,
   setPinnedHoverBehavior,
   setPinnedHoverTargetOpacity,
   setWindowPinned,

@@ -121,6 +121,8 @@ import {
   syncLinuxTrayPinned,
   stripContentSize,
   toggleMaximizeWindow,
+  onGlassFallback,
+  webview2BrokenTransparency,
 } from "./windowClient";
 import {
   TRAY_BADGE_HIDDEN_REFRESH_MS,
@@ -5544,14 +5546,30 @@ export function App() {
 
   // Windows 小组件终身保持创建期透明窗口，不在运行时切换 DWM backdrop。
   // 桌面端初始直接选 alpha，避免 WebView 背景确认前闪一帧 CSS fallback。
+  // WebView2 坏版本时前端同步自检直接锁 CSS（后端事件先于页面加载，监听收不到）。
+  const glassFallbackActive = webview2BrokenTransparency();
   const [glassMode, setGlassMode] = useState(() =>
     resolveGlassMode({
       enabled: transparent && viewMode !== "expanded",
       tintStyle: glassTint,
       nativeAvailable: false,
-      trueAlphaAvailable: isDesktop() && isWindowsPlatform(),
+      trueAlphaAvailable:
+        isDesktop() && isWindowsPlatform() && !glassFallbackActive && !window.__METRIK_GLASS_FALLBACK__,
     }),
   );
+  // WebView2 坏版本兜底：后端 setup 时若检测到透明合成被破坏，
+  // 会设不透明底并发 metrik://glass-fallback；这里把玻璃模式锁成 CSS。
+  useEffect(() => {
+    if (!isDesktop() || !isWindowsPlatform()) return undefined;
+    const stop = onGlassFallback(() => {
+      window.__METRIK_GLASS_FALLBACK__ = true;
+      setGlassMode("css");
+    });
+    return () => {
+      Promise.resolve(stop).then((off) => off?.());
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const apply = () => {
@@ -5561,7 +5579,7 @@ export function App() {
         glassTint,
       )
         .then((mode) => {
-          if (!cancelled) setGlassMode(mode);
+          if (!cancelled) setGlassMode(glassFallbackActive ? "css" : mode);
         })
         .catch((error) => {
           console.warn("Unable to update the desktop window.", error);
@@ -5570,7 +5588,7 @@ export function App() {
               enabled: transparent && viewMode !== "expanded",
               tintStyle: glassTint,
               nativeAvailable: false,
-              trueAlphaAvailable: isDesktop() && isWindowsPlatform(),
+              trueAlphaAvailable: isDesktop() && isWindowsPlatform() && !glassFallbackActive,
             }));
           }
         });

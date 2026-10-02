@@ -1167,6 +1167,68 @@ mod taskbar {
 /// 只关圆角，不用 `SetWindowRgn`：GDI region 是二值边界，压在 per-pixel alpha 上是硬
 /// 锯齿；而且它在变形与内容测量并发时会短暂沿用旧区域（见 WINDOWS-GLASS-IMPLEMENTATION
 /// 第 7 节）。pogget 用 region 是因为它是不透明窗口，没有 alpha 可用。
+/// WebView2 154.0.4258.48（2026-10-01 自动分发）与 Metrik 的全透明窗口
+/// 合成不兼容：内容背景不绘制，整个窗口隐形。这里读运行时版本，
+/// 命中坏版本就给 webview 设不透明底色并通知前端降级 CSS 玻璃。
+/// 坏版本清单按实测追加；WebView2 修复后从清单移除即可恢复真 Alpha。
+#[cfg(windows)]
+mod webview_compat {
+    use tauri::{Emitter, Manager};
+
+    /// 已证实破坏全透明窗口合成的 WebView2 主版本。
+    const BROKEN_WEBVIEW2_MAJOR: u32 = 154;
+
+    pub fn webview2_runtime_major() -> Option<u32> {
+        // wry 不暴露运行时版本；WebView2 安装目录下每个版本一个子目录，
+        // 目录名即版本号（如 154.0.4258.48）。读固定安装路径免新增依赖。
+        const ROOTS: &[&str] = &[
+            "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application",
+            "C:\\Program Files\\Microsoft\\EdgeWebView\\Application",
+        ];
+        for root in ROOTS {
+            let Ok(entries) = std::fs::read_dir(root) else { continue };
+            let mut best: Option<[u32; 4]> = None;
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                let parts: Vec<u32> = name
+                    .split('.')
+                    .map(|piece| piece.parse::<u32>().unwrap_or(0))
+                    .collect();
+                if parts.len() == 4 && parts[0] > 0 {
+                    let quad = [parts[0], parts[1], parts[2], parts[3]];
+                    if best.map_or(true, |b| quad > b) {
+                        best = Some(quad);
+                    }
+                }
+            }
+            if let Some(quad) = best {
+                return Some(quad[0]);
+            }
+        }
+        None
+    }
+
+    /// 返回是否命中坏版本并已做不透明兜底。
+    pub fn force_opaque_if_broken(app: &tauri::AppHandle) -> bool {
+        let Some(major) = webview2_runtime_major() else {
+            return false;
+        };
+        if major < BROKEN_WEBVIEW2_MAJOR {
+            return false;
+        }
+        if let Some(window) = app.get_webview_window("main") {
+            // 深色不透明底：与前端默认深色主题一致；CSS 玻璃会在其上继续作画。
+            let _ = window.set_background_color(Some(tauri::window::Color(26, 27, 32, 255)));
+            let _ = window.emit("metrik://glass-fallback", major);
+        }
+        eprintln!(
+            "Metrik: WebView2 runtime {major}.x breaks transparent composition; forcing opaque background"
+        );
+        true
+    }
+}
+
 #[cfg(windows)]
 fn disable_system_corner_rounding(hwnd: isize) {
     use core::ffi::c_void;
@@ -1727,6 +1789,9 @@ pub fn run() {
                     disable_system_corner_rounding(hwnd.0 as isize);
                 }
             }
+
+            #[cfg(windows)]
+            webview_compat::force_opaque_if_broken(app.app_handle());
 
             let database_path = match (
                 app.path().app_data_dir(),
