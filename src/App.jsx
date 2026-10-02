@@ -23,6 +23,7 @@ import {
   DotsThree,
   EyeSlash,
   FileText,
+  FilmStrip,
   FolderSimple,
   FunnelSimple,
   GearSix,
@@ -32,6 +33,7 @@ import {
   PushPinSimple,
   ShieldCheck,
   Trash,
+  TreeStructure,
   X,
 } from "@phosphor-icons/react";
 import antigravityAppIcon from "./assets/antigravity-app-icon.png";
@@ -1965,6 +1967,18 @@ function TasksWidgetWindow({
   const [refreshing, setRefreshing] = useState(false);
   const [miniControlsOpen, setMiniControlsOpen] = useState(false);
   const [miniOrientation, setMiniOrientation] = useState("horizontal");
+  // 链路样式：竖直时间线（方案 2）/ 横向胶片条（方案 1）共存，标题栏一键切换。
+  // 只作用于展开卡；迷你胶囊是胶囊形态，恒用胶片条。
+  const [chainStyle, setChainStyle] = useState(() =>
+    localStorage.getItem("metrik:chainStyle") === "strip" ? "strip" : "timeline",
+  );
+  const toggleChainStyle = () => {
+    setChainStyle((style) => {
+      const next = style === "timeline" ? "strip" : "timeline";
+      localStorage.setItem("metrik:chainStyle", next);
+      return next;
+    });
+  };
   const miniShellRef = useRef(null);
   const miniLeaveTimerRef = useRef(null);
   // 延时关闭回调里读的是注册时刻的闭包，方向要经 ref 取最新值。
@@ -2253,10 +2267,25 @@ function TasksWidgetWindow({
     if (task.status !== "running" || !task.progressSummary) return null;
     return (
       <p className="task-progress-line" title={task.progressSummary}>
-        正在：{task.progressSummary}
+        <em>正在：</em>
+        {task.progressSummary}
       </p>
     );
   };
+  // 链内排队跳不再单独占行（竖直时间线里已经有了）——只收运行中任务链上的成员。
+  const chainMemberIds = new Set();
+  for (const task of active) {
+    if (task.status !== "running") continue;
+    for (const hop of chainHopsFor(task, chainIndex)) {
+      if (hop.taskId !== task.taskId) chainMemberIds.add(hop.taskId);
+    }
+  }
+  // 星位上下文收敛：全网关跑同一个模型时（北斗常态）模型名进卡头只说一次，
+  // 行内不再重复；模型混跑时才逐行标注。
+  const usageModelSet = new Set(
+    usageSessions.map((session) => session.model).filter(Boolean),
+  );
+  const usageModelUniform = usageModelSet.size === 1 ? [...usageModelSet][0] : null;
   return (
     <main className={shellAppearance.className}>
       <h1 className="sr-only">Metrik Gateway 任务追踪小组件</h1>
@@ -2289,6 +2318,20 @@ function TasksWidgetWindow({
             title="切换外观（深色 / 浅色 / 透明）"
           >
             <CircleHalfTilt size={16} weight={transparent ? "fill" : "light"} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`window-action ${chainStyle === "timeline" ? "window-action--active" : ""}`}
+            onClick={toggleChainStyle}
+            aria-label={`链路样式：${chainStyle === "timeline" ? "竖直时间线" : "横向胶片条"}（点击切换）`}
+            aria-pressed={chainStyle === "timeline"}
+            title={`链路样式：${chainStyle === "timeline" ? "竖直时间线" : "横向胶片条"}（点击切换）`}
+          >
+            {chainStyle === "timeline" ? (
+              <TreeStructure size={16} weight="light" aria-hidden="true" />
+            ) : (
+              <FilmStrip size={16} weight="light" aria-hidden="true" />
+            )}
           </button>
           <button
             type="button"
@@ -2334,6 +2377,8 @@ function TasksWidgetWindow({
           <div className="tasks-card">
             {active.map((task) => {
               const hops = task.status === "running" ? chainHopsFor(task, chainIndex) : [];
+              // 排队任务若是某条运行中链上的成员，时间线里已经有了，不再单独占行
+              if (task.status === "queued" && chainMemberIds.has(task.taskId)) return null;
               if (hops.length < 2) {
                 return (
                   <Fragment key={`${task.gateway}:${task.taskId}`}>
@@ -2342,24 +2387,36 @@ function TasksWidgetWindow({
                   </Fragment>
                 );
               }
-              // 有链路的任务：行 + 进度 + 链路包成一组，底线挪到组底（链路紧贴
-              // 自己的任务，不被任务行的分隔线隔在外面）。
+              // 有链路的任务：行 + 链路包成一组，底线挪到组底。
+              // 链路本体二选一：竖直时间线（默认）/ 横向胶片条，标题栏切换。
               return (
                 <div className="widget-task-group" key={`${task.gateway}:${task.taskId}`}>
                   {renderActiveRow(task)}
-                  {renderProgressLine(task)}
-                  <TaskChainStepper
-                    hops={hops}
-                    currentTaskId={task.taskId}
-                    agentNameMap={agentNameMap}
-                  />
+                  {chainStyle === "strip" ? (
+                    <div className="task-chain">
+                      <ChainFilmstrip
+                        hops={hops}
+                        currentTaskId={task.taskId}
+                        agentNameMap={agentNameMap}
+                      />
+                    </div>
+                  ) : (
+                    <TaskChainTimeline
+                      hops={hops}
+                      currentTaskId={task.taskId}
+                      agentNameMap={agentNameMap}
+                    />
+                  )}
                 </div>
               );
             })}
           </div>
           {usageSessions.length > 0 && (
             <div className="tasks-card tasks-usage-card">
-              <p className="tasks-card-head">星位上下文</p>
+              <p className="tasks-card-head">
+                星位上下文
+                {usageModelUniform ? ` · ${usageModelUniform}` : ""}
+              </p>
               <div className="tasks-usage-list">
                 {usageSessions.map((session) => {
                   const name = agentDisplayName(agentNameMap, session.agentId) || session.agentId || session.key;
@@ -2383,13 +2440,15 @@ function TasksWidgetWindow({
                     <div
                       key={session.key}
                       className="tasks-usage-row"
-                      title={`${session.key}\n${estimate != null ? `上下文 ${estimate.toLocaleString()} tok` : "空闲会话，无上下文估算"}${budget != null ? ` · 预算 ${budget.toLocaleString()} tok` : ""}${msgs != null ? ` · ${msgs} 条消息` : ""}${lastSeen ? `\n最近活动 ${formatTaskAge(lastSeen)}` : ""}`}
+                      title={`${session.key}${model ? `\n模型 ${model}` : ""}\n${estimate != null ? `上下文 ${estimate.toLocaleString()} tok` : "空闲会话，无上下文估算"}${budget != null ? ` · 预算 ${budget.toLocaleString()} tok` : ""}${msgs != null ? ` · ${msgs} 条消息` : ""}${lastSeen ? `\n最近活动 ${formatTaskAge(lastSeen)}` : ""}`}
                     >
                       <i className={`agent-status-dot tasks-usage-dot ${running ? "" : "tasks-usage-dot--idle"}`} aria-hidden="true" />
                       <span className="tasks-usage-name">
                         {name}
                         {badge ? <em>{badge}</em> : null}
-                        {model ? <small className="tasks-usage-model">{model}</small> : null}
+                        {!usageModelUniform && model ? (
+                          <small className="tasks-usage-model">{model}</small>
+                        ) : null}
                       </span>
                       <span className={`task-context-bar ${fillPct == null ? "task-context-bar--empty" : ""}`}>
                         <i className={tone ? `task-context-fill--${tone}` : undefined} style={fillPct != null ? { width: `${fillPct}%` } : undefined} />
@@ -5762,12 +5821,46 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
   );
 }
 
-function TaskChainStepper({ hops, currentTaskId, agentNameMap }) {
+/// 竖直链路时间线（展开卡）：一跳一行 = 状态符 + 星名 + 该跳任务 + 耗时，
+/// 当前跳行下挂任务进度原话。排队跳天然在列，任务列表里不再重复占行。
+function TaskChainTimeline({ hops, currentTaskId, agentNameMap }) {
   if (!hops || hops.length < 2) return null;
   return (
-    <div className="task-chain">
-      <ChainFilmstrip hops={hops} currentTaskId={currentTaskId} agentNameMap={agentNameMap} />
-    </div>
+    <ol className="task-timeline">
+      {hops.map((hop) => {
+        const done = hop.status === "succeeded";
+        const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
+        const pending = hop.status === "queued";
+        const current = hop.taskId === currentTaskId && !done && !failed;
+        const tone = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
+        const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
+        const duration = (formatTaskDuration(hop.startedAtMs, hop.endedAtMs) || "")
+          .replace(/ /g, "")
+          .replace(/0秒$/, "")
+          .replace(/0分$/, "");
+        const state = done ? "已完成" : failed ? "失败" : pending ? "排队中" : "进行中";
+        return (
+          <li
+            key={`${hop.gateway ?? ""}:${hop.taskId}`}
+            className={`task-timeline-hop task-timeline-hop--${tone}`}
+            title={`${name} · ${state}${duration ? ` · ${duration}` : ""}`}
+          >
+            <span className="task-timeline-glyph" aria-hidden="true">
+              {done ? "✓" : failed ? "✕" : pending ? "○" : "●"}
+            </span>
+            <span className="task-timeline-name">{name}</span>
+            <span className="task-timeline-title">{hop.title || hop.taskId}</span>
+            {duration ? <small>{duration}</small> : null}
+            {current && hop.progressSummary ? (
+              <p className="task-timeline-progress" title={hop.progressSummary}>
+                <em>正在：</em>
+                {hop.progressSummary}
+              </p>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 

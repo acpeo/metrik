@@ -6682,6 +6682,19 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   vertical-align: 1px;
 }
 
+/* 模型名：模型混跑时才逐行标注（全网关同模型时进卡头，见 App.jsx）。
+   行内跟在角标后面，不另占一行。 */
+.tasks-usage-model {
+  margin-left: 3px;
+  font-size: 8.5px;
+  font-weight: 480;
+  letter-spacing: 0;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* 水位条：2px 高发丝条，绿=健康，黄=80%+ 或建议压缩；无估算时空槽。 */
 .task-context-bar {
   position: relative;
@@ -7113,6 +7126,26 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   padding: 1px 11px 3px 15px;
 }
 
+/* 运行中任务的进度一行小字（progressSummary 原话）：缩进与链路对齐，
+   单行截断，悬停看全文。"正在"前缀用绿色，与下方链路条区分归属。 */
+.task-progress-line {
+  margin: 0;
+  padding: 0 11px 2.5px 15px;
+  font-size: 10px;
+  letter-spacing: -0.01em;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-progress-line em,
+.task-timeline-progress em {
+  font-style: normal;
+  color: #6fc49a;
+  opacity: 0.95;
+}
+
 /* 有链路的任务：行 + 链路同组，组底线替代行底线——链路在行与本组分隔线之间，
    不被任务行的底线隔在外面。压制规则要压过下面 glass-light/clear/ink 变体
    （同 (0,3,0) 会输给文件更靠后的变体），故挂到 .tasks-window-body 提到 (0,4,0)。 */
@@ -7179,6 +7212,97 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   opacity: 0.2;
 }
 
+/* ── 竖直链路时间线（展开卡）：一跳一行，左列状态符 + 穿行引导竖线，
+   当前跳行下挂进度原话；排队跳天然在列，任务列表不再重复占行。 ── */
+.task-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 2px 11px 4px 15px;
+}
+
+.task-timeline-hop {
+  position: relative;
+  display: grid;
+  grid-template-columns: 13px auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1.5px 0;
+}
+
+/* 引导线：每跳画整高一段，首尾各收半截——连成一条穿过状态符列的竖线 */
+.task-timeline-hop::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.task-timeline-hop:first-child::before { top: 55%; }
+.task-timeline-hop:last-child::before { bottom: 45%; }
+.task-timeline-hop:only-child::before { display: none; }
+
+.task-timeline-glyph {
+  position: relative; /* 压在引导线之上 */
+  width: 13px;
+  text-align: center;
+  font-size: 9px;
+}
+
+.task-timeline-name {
+  font-size: 10.5px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  opacity: 0.92;
+  white-space: nowrap;
+}
+
+.task-timeline-title {
+  font-size: 10.5px;
+  opacity: 0.62;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-timeline-hop small {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.5;
+  white-space: nowrap;
+}
+
+.task-timeline-progress {
+  grid-column: 2 / -1;
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: -0.01em;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 跳状态：与胶片条同语言（绿=完成/进行中，红=失败，○=待跑） */
+.task-timeline-hop--done { opacity: 0.72; }
+.task-timeline-hop--pending { opacity: 0.48; }
+.task-timeline-hop--done .task-timeline-glyph,
+.task-timeline-hop--current .task-timeline-glyph { color: #6fc49a; }
+.task-timeline-hop--failed .task-timeline-glyph { color: #ec7a63; }
+.task-timeline-hop--failed { opacity: 0.75; }
+
+/* 浅色档状态色 = 浅面板 token */
+.widget-shell--transparent.widget-shell--glass-light .task-progress-line em,
+.widget-shell--transparent.widget-shell--glass-light .task-timeline-progress em { color: #1f7a4d; }
+.widget-shell--transparent.widget-shell--glass-light .task-timeline-hop--done .task-timeline-glyph,
+.widget-shell--transparent.widget-shell--glass-light .task-timeline-hop--current .task-timeline-glyph { color: #1f7a4d; }
+.widget-shell--transparent.widget-shell--glass-light .task-timeline-hop--failed .task-timeline-glyph { color: #a1402e; }
+.widget-shell--transparent.widget-shell--glass-light .task-timeline-hop::before {
+  background: rgba(31, 33, 36, 0.14);
+}
+
 /* 浅色档状态色 = 浅面板 token */
 .widget-shell--transparent.widget-shell--glass-light .task-chain-hop--done .task-chain-glyph,
 .widget-shell--transparent.widget-shell--glass-light .task-chain-hop--current .task-chain-glyph { color: #1f7a4d; }
@@ -7201,6 +7325,10 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   background: rgba(255, 255, 255, 0.07);
 }
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-chain {
+  color: rgba(255, 255, 255, 0.8);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-timeline,
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-progress-line {
   color: rgba(255, 255, 255, 0.8);
 }
 /* 迷你条里的 strip-button 在深色 HUD 上（原覆盖只挂在 .strip-shell 下，够不到这） */
