@@ -2021,8 +2021,8 @@ function TasksWidgetWindow({
   // 与原小组件"行集合格子不藏"同一哲学：窗口高度不跳）。
   const miniSize = (vertical, controlsOpenState) =>
     vertical
-      ? { width: 42, height: controlsOpenState ? 304 : 180 }
-      : { width: controlsOpenState ? 324 : 240, height: 36 };
+      ? { width: 42, height: controlsOpenState ? 392 : 240 }
+      : { width: controlsOpenState ? 384 : 300, height: 36 };
   // 尺寸变化统一走这一个副作用（折叠/开合/切向/行数），处理器只改状态。
   useLayoutEffect(() => {
     if (!collapsed) return;
@@ -2109,32 +2109,18 @@ function TasksWidgetWindow({
           }}
         >
           {miniVertical ? (
-            (() => {
-              // 计数格：状态点 + 数字 + 小标签（原竖条 icon/数字/堆叠的平移）。
-              // 失败/完成 = 近 24 小时口径（见 recentlyEnded）。
-              const failedCount = recentlyEnded.filter(
-                (task) => task.status === "failed" || task.status === "timed_out" || task.status === "lost",
-              ).length;
-              const doneCount = recentlyEnded.filter((task) => task.status === "succeeded").length;
-              const countCells = [
-                { key: "running", dotCls: feed.live ? "tasks-mini-dot--on" : "", count: active.length, label: "运行" },
-                { key: "failed", dotCls: "tasks-mini-dot--failed", count: failedCount, label: "失败" },
-                { key: "done", dotCls: "tasks-mini-dot--done", count: doneCount, label: "完成" },
-              ];
-              return countCells.map((cell) => (
-                <button
-                  key={cell.key}
-                  type="button"
-                  className={`tasks-mini-cell${cell.count ? "" : " tasks-mini-cell--zero"}`}
-                  onClick={expand}
-                  title={`${cell.label} ${cell.count} · 点击展开`}
-                >
-                  <i className={`tasks-mini-dot ${cell.dotCls}`} aria-hidden="true" />
-                  <em>{cell.count}</em>
-                  <small>{cell.label}</small>
-                </button>
-              ));
-            })()
+            // 竖条 = 链路胶卷竖放：当前执行 agent 垂直居中，滚轮上下滑（与横条对称）
+            miniRows.length > 0 ? (
+              <ChainFilmstrip
+                vertical
+                hops={chainHopsFor(miniRows[0].task, chainIndex)}
+                currentTaskId={miniRows[0].task.taskId}
+                agentNameMap={agentNameMap}
+                onExpand={expand}
+              />
+            ) : (
+              <span className="tasks-mini-empty">{feed.live ? "暂无运行中任务" : "未同步"}</span>
+            )
           ) : (
             // 横条 = 跑马灯：只显示第一个任务，多了用 +N 提示
             <>
@@ -5604,7 +5590,7 @@ function TaskStatusPill({ status }) {
 /// 跑马灯链路胶卷：当前执行 agent 恒定居中，链条两侧延伸出屏，
 /// 滚轮左右滑看前后跳（用户点名交互）。数据变化时重新居中，手动滚后尊重用户
 /// 位置直到下一次数据变化。边缘渐隐提示还有内容。
-function ChainFilmstrip({ hops, currentTaskId, agentNameMap }) {
+function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, onExpand }) {
   const stripRef = useRef(null);
   const currentRef = useRef(null);
   const currentKey = `${currentTaskId ?? ""}:${hops.length}`;
@@ -5612,15 +5598,35 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap }) {
     const strip = stripRef.current;
     const current = currentRef.current;
     if (!strip || !current) return;
-    strip.scrollLeft = current.offsetLeft + current.offsetWidth / 2 - strip.clientWidth / 2;
-  }, [currentKey]);
+    if (vertical) {
+      strip.scrollTop = current.offsetTop + current.offsetHeight / 2 - strip.clientHeight / 2;
+    } else {
+      strip.scrollLeft = current.offsetLeft + current.offsetWidth / 2 - strip.clientWidth / 2;
+    }
+  }, [currentKey, vertical]);
   return (
     <span
-      className="tasks-mini-strip"
+      role={onExpand ? "button" : undefined}
+      tabIndex={onExpand ? 0 : undefined}
+      aria-label={onExpand ? "任务链路，点击展开任务追踪" : undefined}
+      className={`tasks-mini-strip${vertical ? " tasks-mini-strip--vertical" : ""}`}
       ref={stripRef}
+      onClick={onExpand}
+      onKeyDown={
+        onExpand
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onExpand();
+              }
+            }
+          : undefined
+      }
+      title="点击展开任务追踪 · 滚轮滑动查看链路"
       onWheel={(event) => {
         const target = event.currentTarget;
-        target.scrollLeft += event.deltaY + event.deltaX;
+        if (vertical) target.scrollTop += event.deltaY + event.deltaX;
+        else target.scrollLeft += event.deltaY + event.deltaX;
       }}
     >
       {hops.map((hop, index) => {
@@ -5640,7 +5646,7 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap }) {
             <span ref={current ? currentRef : undefined} className={`task-chain-hop task-chain-hop--${tone}`}>
               <span className="task-chain-agent">{name}</span>
               <span className="task-chain-glyph" aria-hidden="true">{done ? "✓" : failed ? "✕" : pending ? "○" : "●"}</span>
-              {duration && <small>{duration}</small>}
+              {duration && !vertical && <small>{duration}</small>}
             </span>
           </Fragment>
         );

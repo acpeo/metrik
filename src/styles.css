@@ -6901,8 +6901,17 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   min-width: 0;
   align-items: center;
   gap: 3px;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
+  /* span 化后仍按可点击元素重置 UA 底色（button 默认 ButtonFace 白底） */
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -6936,6 +6945,35 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .widget-shell--glass-light .tasks-mini-strip .task-chain-hop--current .task-chain-agent {
   color: rgba(29, 31, 35, 0.98);
+}
+
+/* 链路胶卷纵放（竖条形态）：与横条对称——当前跳垂直居中，滚轮上下滑，
+   上下渐隐；连接线转成竖线 */
+.tasks-mini-strip--vertical {
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 0;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 10%, #000 90%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 10%, #000 90%, transparent);
+}
+
+.tasks-mini-strip--vertical .task-chain-link {
+  width: 1px;
+  height: 10px;
+}
+
+.tasks-mini-strip--vertical .task-chain-hop {
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 0;
+}
+
+/* 星名竖排：一字一格（用户点名），呼吸点放名字下方 */
+.tasks-mini-strip--vertical .task-chain-agent {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.08em;
+  line-height: 1;
 }
 
 /* 跑马灯里的紧凑链：小一号、零外距，时长不进横条（tooltip 与展开卡里有） */
