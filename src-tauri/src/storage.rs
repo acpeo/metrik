@@ -362,14 +362,20 @@ fn insert_or_merge_usage_event(
     // （见 hermes_providers），所以按事件键的 `hermes:` 前缀识别，不按 adapter。
     // model 与路由全列都在事件键里，矛盾模型到不了合并路径，无需拒绝分支。
     let mergeable_hermes_usage = event.event_key.starts_with("hermes:");
+    // OpenClaw 会话转录会被 /fork 与分支逐字复制进新会话文件：复制体带新
+    // sessionId 但同一 messageId（事件键含 sessionId，故 payload 不同），与
+    // pi 同型——按事件键的 `openclaw:` 前缀识别，分量最大值合并（相同观察
+    // 是 no-op），矛盾模型拒绝该条观察。
+    let mergeable_openclaw_message = event.adapter_id == "openclaw";
     let mergeable = mergeable_claude_message
         || mergeable_antigravity_response
         || mergeable_pi_entry
-        || mergeable_hermes_usage;
+        || mergeable_hermes_usage
+        || mergeable_openclaw_message;
     // A contradictory model makes the provider message ambiguous. Reject only
     // this observation; the caller will commit the source's other valid events
     // and surface partial coverage through scan diagnostics.
-    if mergeable_claude_message || mergeable_pi_entry {
+    if mergeable_claude_message || mergeable_pi_entry || mergeable_openclaw_message {
         if let (Some(stored_model), Some(candidate_model)) =
             (stored.model.as_deref(), event.model.as_deref())
         {

@@ -9,6 +9,7 @@ mod coding_quota;
 mod detect;
 mod domain;
 mod engine;
+mod gateway_tasks;
 mod hermes_providers;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -1606,6 +1607,142 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 任务追踪：一个被追踪的 Gateway 连接配置（设置面板下发）。
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayTargetConfig {
+    pub label: String,
+    pub url: String,
+    pub token: String,
+    /// 本机身份可省略（用默认 state 目录）；VPS 为其单独生成一套。
+    #[serde(default)]
+    pub identity_dir: Option<PathBuf>,
+}
+
+/// 单个 Gateway 的拉取结果视图（成功/失败 + 原因）。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayTaskView {
+    pub gateway: String,
+    pub ok: bool,
+    pub task_count: usize,
+    pub error: Option<String>,
+}
+
+/// 拉一次 Gateway 任务台账并落本地账本（突破官方 7 天保留）。
+/// gateways 为空时返回错误；UI 传入设置里配置的目标列表。
+#[tauri::command]
+async fn gateway_task_snapshot(
+    gateways: Vec<GatewayTargetConfig>,
+    state: State<'_, AppState>,
+) -> Result<Vec<GatewayTaskView>, String> {
+    let database_path = state.database_path.clone();
+    let scan_gate = Arc::clone(&state.scan_gate);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _gate = scan_gate
+            .lock()
+            .map_err(|_| "usage scan lock poisoned".to_owned())?;
+        let connection = storage::open_database(&database_path)
+            .map_err(|error| error.to_string())?;
+        let mut views = Vec::new();
+        // 节流状态：同一网关 2.5 秒内的重复快照直接复用上一拍结果。
+        let mut last_fetch: Option<(String, std::time::Instant)> = None;
+        for target in &gateways {
+            let gw = gateway_tasks::GatewayTarget {
+                label: target.label.clone(),
+                url: target.url.clone(),
+                token: target.token.clone(),
+                identity_dir: target.identity_dir.clone(),
+            };
+            match gateway_tasks::snapshot_gateway_tasks_throttled(&connection, &gw, &mut last_fetch) {
+                Ok(_) => views.push(GatewayTaskView {
+                    gateway: target.label.clone(),
+                    ok: true,
+                    task_count: 0,
+                    error: None,
+                }),
+                Err(error) => views.push(GatewayTaskView {
+                    gateway: target.label.clone(),
+                    ok: false,
+                    task_count: 0,
+                    error: Some(error.to_string()),
+                }),
+            }
+        }
+        Ok(views)
+    })
+    .await
+    .map_err(|error| format!("gateway task snapshot failed: {error}"))?
+}
+
+/// 读本地任务账本（不联网）：任务页数据源。按 first_seen 倒序，可选状态过滤。
+#[tauri::command]
+fn gateway_task_list(
+    status: Option<String>,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<Vec<gateway_tasks::GatewayTaskRow>, String> {
+    let database_path = state.database_path.clone();
+    let connection = storage::open_database_read_only(&database_path)
+        .map_err(|error| error.to_string())?;
+    gateway_tasks::list_tasks(&connection, status.as_deref(), limit)
+        .map_err(|error| error.to_string())
+}
+
+/// 拉 Agent 会话活动快照（实时监控北斗等多 Agent 协作）：
+/// 数据源 = sessions.list（各星位会话 status/hasActiveRun/updatedAt）+ agents.list。
+/// 带 2.5s 节流，与前端 3s 刷新节奏对齐。
+#[tauri::command]
+async fn gateway_agents_snapshot(
+    gateways: Vec<GatewayTargetConfig>,
+    state: State<'_, AppState>,
+) -> Result<Vec<gateway_tasks::AgentActivity>, String> {
+    let database_path = state.database_path.clone();
+    let scan_gate = Arc::clone(&state.scan_gate);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _gate = scan_gate
+            .lock()
+            .map_err(|_| "usage scan lock poisoned".to_owned())?;
+        let connection = storage::open_database(&database_path)
+            .map_err(|error| error.to_string())?;
+        let mut merged: Vec<gateway_tasks::AgentActivity> = Vec::new();
+        for target in &gateways {
+            let gw = gateway_tasks::GatewayTarget {
+                label: target.label.clone(),
+                url: target.url.clone(),
+                token: target.token.clone(),
+                identity_dir: target.identity_dir.clone(),
+            };
+            // 复用任务快照的节流逻辑：agents 快照与任务快照共享同一网关连接
+            // 成本，这里独立节流窗口。
+            match gateway_tasks::fetch_agents_snapshot(&gw) {
+                Ok(snapshot) => {
+                    for mut agent in snapshot.agents {
+                        agent.agent_id = format!("{}:{}", target.label, agent.agent_id);
+                        if let Some(existing) = merged.iter_mut().find(|existing| existing.agent_id == agent.agent_id) {
+                            existing.running_tasks += agent.running_tasks;
+                            existing.session_count += agent.session_count;
+                            if agent.last_active_ms.map(|new| existing.last_active_ms.map(|old| new > old).unwrap_or(true)).unwrap_or(false) {
+                                existing.last_active_ms = agent.last_active_ms;
+                            }
+                            existing.active = existing.active || agent.active;
+                        } else {
+                            merged.push(agent);
+                        }
+                    }
+                }
+                Err(_) => { /* 单网关失败不阻塞其它网关 */ }
+            }
+        }
+        let _ = connection;
+        Ok(merged)
+    })
+    .await
+    .map_err(|error| format!("agents snapshot failed: {error}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 前端窗口形态必须使用编译期真实平台，不能依赖 WebView user-agent。
@@ -1809,7 +1946,10 @@ pub fn run() {
             resize_macos_panel,
             set_macos_agent_selection,
             get_macos_agent_selection,
-            update_macos_status_items
+            update_macos_status_items,
+            gateway_task_snapshot,
+            gateway_task_list,
+            gateway_agents_snapshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running Metrik");

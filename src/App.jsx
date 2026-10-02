@@ -27,6 +27,7 @@ import {
   FunnelSimple,
   GearSix,
   HardDrives,
+  ListChecks,
   Minus,
   PushPinSimple,
   ShieldCheck,
@@ -40,6 +41,7 @@ import cursorAppIcon from "./assets/cursor-app-icon.png";
 import deepseekAppIcon from "./assets/deepseek-app-icon.png";
 import hermesAppIcon from "./assets/hermes-app-icon.png";
 import kimiAppIcon from "./assets/kimi-app-icon.png";
+import openclawAppIcon from "./assets/openclaw-app-icon.png";
 import opencodeAppIcon from "./assets/opencode-app-icon.png";
 import qoderAppIcon from "./assets/qoder-app-icon.png";
 import grokAppIcon from "./assets/grok-app-icon.png";
@@ -48,6 +50,7 @@ import qwenAppIcon from "./assets/qwen-app-icon.png";
 import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
+import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow, isBalanceWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -155,6 +158,7 @@ const NAV_ITEMS = [
   { id: "overview", label: "概览", icon: ChartLineUp },
   { id: "usage", label: "用量", icon: ChartBar },
   { id: "reports", label: "报告", icon: FileText },
+  { id: "tasks", label: "任务", icon: ListChecks },
   { id: "settings", label: "设置", icon: GearSix },
 ];
 
@@ -260,6 +264,16 @@ const AGENT_META = {
     accent: "#8a8d92",
     iconSrc: hermesAppIcon,
     iconClass: "agent-icon--hermes",
+  },
+  openclaw: {
+    // OpenClaw 网关是 harness：卡片只记本地解析的会话用量（含挂载进来的
+    // VPS 数据），没有本地套餐概念，不显示配额；任务/额度走 Gateway 接口
+    // （另行设计）。
+    label: "OpenClaw",
+    // 中性墨绿灰：OpenClaw 品牌是深色螯形，与 GLM 的青、pi 的银灰拉开。
+    accent: "#5f7a6a",
+    iconSrc: openclawAppIcon,
+    iconClass: "agent-icon--openclaw",
   },
   cursor: {
     // 用量取 cursor.com 仪表盘的账号级逐次事件，配额取同一仪表盘的套餐余量
@@ -3427,6 +3441,12 @@ const SETTINGS_TABS = [
     blurb: "配置各 Agent 的官方配额读取方式。官方配额、本地解析用量与估算成本是三类不同事实，界面上始终分开呈现。",
   },
   {
+    id: "gateways",
+    label: "任务追踪",
+    title: "Gateway 任务追踪",
+    blurb: "连接本机或 VPS 上的 OpenClaw Gateway，追踪后台任务（subagent / cron / CLI）。token 只存本机，不进账本、不上传。",
+  },
+  {
     id: "sync",
     label: "同步与更新",
     title: "多设备同步与更新",
@@ -3434,7 +3454,188 @@ const SETTINGS_TABS = [
   },
 ];
 
-function SettingsSection({ onSnapshotRefresh, widgetAgents, onToggleWidgetAgent, onMoveWidgetAgent, stripAgents, onToggleStripAgent, onMoveStripAgent, detectedAgents, trayBadgeEnabled, onToggleTrayBadge, glassAlpha, onGlassAlpha, glassTint, onGlassTint, glassInk, onGlassInk, uiScale, onUiScale, stripScale, onStripScale, pinned, onPinnedChange, pinnedHoverMode, onPinnedHoverMode, pinnedHoverOpacity, onPinnedHoverOpacity, theme, onThemeChange, autoUpdateCheck, onAutoUpdateCheck, availableUpdate }) {
+function MonitorSettingsCard() {
+  const [draft, setDraft] = useState(() => loadMonitorConfig());
+  const [saved, setSaved] = useState(false);
+
+  const current = loadMonitorConfig();
+  const dirty =
+    Number(draft.refreshIntervalSec) !== current.refreshIntervalSec ||
+    Number(draft.staleThresholdSec) !== current.staleThresholdSec;
+
+  const apply = () => {
+    saveMonitorConfig(draft);
+    setDraft(loadMonitorConfig());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  return (
+    <div className="settings-card">
+      <h2>实时监控参数</h2>
+      <p className="gateway-hint">
+        任务页的自动同步间隔与"无活动"判定阈值。保存后立即生效，无需重启或重装。
+      </p>
+      <div className="gateway-form">
+        <label className="monitor-field">
+          <span>自动同步间隔（秒，1–60）</span>
+          <input
+            type="number"
+            min="1"
+            max="60"
+            value={draft.refreshIntervalSec}
+            aria-label="自动同步间隔秒数"
+            onChange={(event) => setDraft((current) => ({ ...current, refreshIntervalSec: event.target.value }))}
+          />
+        </label>
+        <label className="monitor-field">
+          <span>无活动判定阈值（秒，10–3600）</span>
+          <input
+            type="number"
+            min="10"
+            max="3600"
+            value={draft.staleThresholdSec}
+            aria-label="无活动判定阈值秒数"
+            onChange={(event) => setDraft((current) => ({ ...current, staleThresholdSec: event.target.value }))}
+          />
+        </label>
+        <button
+          type="button"
+          className="ledger-button ledger-button--primary"
+          disabled={!dirty}
+          onClick={apply}
+        >
+          {saved ? "已保存" : "保存参数"}
+        </button>
+      </div>
+      <p className="gateway-hint">
+        建议：同步 2–5 秒；无活动阈值 60–300 秒（北斗星位一轮思考加工具调用常超 30 秒，不宜过短）。
+      </p>
+    </div>
+  );
+}
+
+function GatewaySettingsCard({ gateways, onGatewaysChanged }) {
+  const [draft, setDraft] = useState({ label: "", url: "", token: "", identityDir: "" });
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+
+  const valid = draft.label.trim() && draft.url.trim() && draft.token.trim();
+
+  const addGateway = async () => {
+    if (!valid) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const entry = {
+        label: draft.label.trim(),
+        url: draft.url.trim(),
+        token: draft.token.trim(),
+      };
+      // 身份目录可选：远程网关用专用设备身份（identity/device.json）。
+      // 本机网关留空 → 后端用默认 state 目录的探测身份。
+      if (draft.identityDir.trim()) {
+        entry.identityDir = draft.identityDir.trim();
+      }
+      // 连通性验证：直接试拉一次。失败也允许保存（VPS 可能暂时离线），
+      // 但把错误显示出来让用户知道。
+      const result = await refreshGatewayTasks([entry]);
+      const outcome = result.results?.[0];
+      const next = [
+        ...gateways.filter((candidate) => candidate.label !== entry.label),
+        entry,
+      ];
+      saveGatewayConfig(next);
+      onGatewaysChanged(next);
+      setDraft({ label: "", url: "", token: "", identityDir: "" });
+      if (outcome?.ok) {
+        setFeedback({ tone: "success", message: `已添加并连通：${entry.label}` });
+      } else {
+        setFeedback({
+          tone: "error",
+          message: `已保存，但连通失败：${outcome?.error || "未知原因"}（回环/SSH 隧道自动批准；否则需在网关侧 openclaw devices approve）`,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeGateway = (label) => {
+    const next = gateways.filter((entry) => entry.label !== label);
+    saveGatewayConfig(next);
+    onGatewaysChanged(next);
+  };
+
+  return (
+    <div className="settings-card">
+      <h2>被追踪的 Gateway</h2>
+      {gateways.length === 0 ? (
+        <p className="gateway-hint">尚未配置。本机 Gateway（ws://127.0.0.1:18789）可直接添加。</p>
+      ) : (
+        <ul className="gateway-list">
+          {gateways.map((entry) => (
+            <li key={entry.label}>
+              <span className="gateway-label">{entry.label}</span>
+              <span className="gateway-url">{entry.url}</span>
+              <button type="button" className="ledger-button ledger-button--secondary" onClick={() => removeGateway(entry.label)}>
+                移除
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="gateway-form">
+        <input
+          type="text"
+          value={draft.label}
+          placeholder="名称（如：本机 / VPS）"
+          aria-label="Gateway 名称"
+          onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
+        />
+        <input
+          type="text"
+          value={draft.url}
+          placeholder="ws://127.0.0.1:18789"
+          aria-label="Gateway 地址"
+          spellCheck={false}
+          onChange={(event) => setDraft((current) => ({ ...current, url: event.target.value }))}
+        />
+        <input
+          type="password"
+          value={draft.token}
+          placeholder="Gateway token"
+          aria-label="Gateway token"
+          onChange={(event) => setDraft((current) => ({ ...current, token: event.target.value }))}
+        />
+        <input
+          type="text"
+          value={draft.identityDir}
+          placeholder="身份目录（可选，远程网关用，如 C:\\Users\\me\\.openclaw-vps-metrik）"
+          aria-label="Gateway 身份目录"
+          spellCheck={false}
+          onChange={(event) => setDraft((current) => ({ ...current, identityDir: event.target.value }))}
+        />
+        <button type="button" className="ledger-button ledger-button--primary" disabled={busy || !valid} onClick={addGateway}>
+          {busy ? "验证中…" : "添加并验证"}
+        </button>
+      </div>
+      {feedback && (
+        <p className={feedback.tone === "error" ? "tasks-feedback tasks-feedback--error" : "tasks-feedback tasks-feedback--success"}>
+          {feedback.message}
+        </p>
+      )}
+      <p className="gateway-hint">
+        远程 Gateway：推荐 SSH 隧道（ssh -N -L 127.0.0.1:18790:127.0.0.1:18789 user@vps），
+        地址填 ws://127.0.0.1:18790，回环自动批准；公网直连则需在网关侧
+        openclaw devices approve。远程网关请填专用身份目录（内含 identity/device.json，
+        由 metrik-gateway-setup.sh 生成）；本机网关留空。token 与任务元数据不出本机。
+      </p>
+    </div>
+  );
+}
+
+function SettingsSection({ onSnapshotRefresh, gateways, onGatewaysChanged, widgetAgents, onToggleWidgetAgent, onMoveWidgetAgent, stripAgents, onToggleStripAgent, onMoveStripAgent, detectedAgents, trayBadgeEnabled, onToggleTrayBadge, glassAlpha, onGlassAlpha, glassTint, onGlassTint, glassInk, onGlassInk, uiScale, onUiScale, stripScale, onStripScale, pinned, onPinnedChange, pinnedHoverMode, onPinnedHoverMode, pinnedHoverOpacity, onPinnedHoverOpacity, theme, onThemeChange, autoUpdateCheck, onAutoUpdateCheck, availableUpdate }) {
   const [settings, setSettings] = useState(null);
   const [directoryInput, setDirectoryInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -3571,6 +3772,13 @@ function SettingsSection({ onSnapshotRefresh, widgetAgents, onToggleWidgetAgent,
             <QoderQuotaCard onSnapshotRefresh={onSnapshotRefresh} />
             <CursorUsageCard onSnapshotRefresh={onSnapshotRefresh} />
             <CodexCreditsCard />
+          </>
+        )}
+
+        {activeTab.id === "gateways" && (
+          <>
+            <GatewaySettingsCard gateways={gateways} onGatewaysChanged={onGatewaysChanged} />
+            <MonitorSettingsCard />
           </>
         )}
 
@@ -4720,6 +4928,307 @@ function Sparkline({ points, color }) {
   );
 }
 
+function formatTaskAge(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  const seconds = Math.floor((Date.now() - ms) / 1000);
+  if (seconds < 60) return "刚刚";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}
+
+function formatTaskDuration(startedMs, endedMs) {
+  if (!Number.isFinite(startedMs) || startedMs <= 0) return null;
+  const endMs = Number.isFinite(endedMs) && endedMs > 0 ? endedMs : Date.now();
+  const seconds = Math.max(0, Math.floor((endMs - startedMs) / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
+const TASK_STATUS_META = {
+  queued: { label: "排队中", className: "task-pill--queued" },
+  running: { label: "运行中", className: "task-pill--running" },
+  succeeded: { label: "已完成", className: "task-pill--succeeded" },
+  failed: { label: "失败", className: "task-pill--failed" },
+  timed_out: { label: "超时", className: "task-pill--failed" },
+  cancelled: { label: "已取消", className: "task-pill--neutral" },
+  lost: { label: "失联", className: "task-pill--failed" },
+};
+
+function TaskStatusPill({ status }) {
+  const meta = TASK_STATUS_META[status] || { label: status || "未知", className: "task-pill--neutral" };
+  return <span className={`task-pill ${meta.className}`}>{meta.label}</span>;
+}
+
+function TasksSection({ gateways, onGatewaysChanged }) {
+  const [state, setState] = useState({ status: "loading", filter: "active", data: null });
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+  const [lastSync, setLastSync] = useState(null);
+  const [live, setLive] = useState(false);
+  const [agentsSnap, setAgentsSnap] = useState(null);
+  const [monitor, setMonitor] = useState(() => loadMonitorConfig());
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const load = useCallback((filter) => {
+    loadGatewayTasks(filter === "all" ? null : filter)
+      .then((data) => {
+        setState((current) => ({ ...current, status: "ready", data }));
+        setLastSync(Date.now());
+      })
+      .catch(() => setState((current) => ({ ...current, status: "error", data: null })));
+  }, []);
+
+  // 设置页保存监控参数后立即生效（刷新间隔变化会重建定时器）
+  useEffect(() => {
+    const handler = () => setMonitor(loadMonitorConfig());
+    window.addEventListener("metrik-monitor-changed", handler);
+    return () => window.removeEventListener("metrik-monitor-changed", handler);
+  }, []);
+
+  // 实时监控循环：默认 3 秒一拍（间隔可在设置 → 任务追踪里调整）。Tauri 下每拍先触发后端快照（拉网关写账本），
+  // 再读账本刷新视图；浏览器演示模式只读演示数据。页面隐藏时暂停。
+  useEffect(() => {
+    let alive = true;
+    load(stateRef.current.filter);
+    const tick = async () => {
+      if (!alive || document.visibilityState === "hidden") return;
+      const filter = stateRef.current.filter;
+      if (isTauriRuntime() && gateways.length) {
+        try {
+          const result = await refreshGatewayTasks(gateways);
+          const failures = result.results.filter((entry) => !entry.ok);
+          setLive(failures.length === 0);
+          setFeedback(
+            failures.length
+              ? { tone: "error", message: failures.map((entry) => `${entry.gateway}：${entry.error}`).join("；") }
+              : null,
+          );
+        } catch {
+          setLive(false);
+        }
+      } else if (!gateways.length) {
+        setLive(false);
+      }
+      if (gateways.length) {
+        loadAgentsSnapshot(gateways)
+          .then((snap) => alive && setAgentsSnap(snap))
+          .catch(() => {});
+      }
+      load(filter);
+    };
+    tick();
+    const timer = setInterval(tick, Math.max(1, monitor.refreshIntervalSec) * 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gateways.map((gateway) => gateway.label).join("|"), monitor.refreshIntervalSec, load]);
+
+  const handleRefresh = async () => {
+    if (!gateways.length) {
+      setFeedback({ tone: "error", message: "尚未配置被追踪的 Gateway：在设置 → 任务追踪里添加。" });
+      return;
+    }
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const result = await refreshGatewayTasks(gateways);
+      const failures = result.results.filter((entry) => !entry.ok);
+      if (failures.length) {
+        setFeedback({
+          tone: "error",
+          message: failures.map((entry) => `${entry.gateway}：${entry.error}`).join("；"),
+        });
+      } else {
+        setFeedback({ tone: "success", message: `已从 ${result.results.length} 个 Gateway 拉取任务台账。` });
+      }
+      load(state.filter);
+      onGatewaysChanged?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (state.status === "loading" && !state.data) {
+    return (
+      <main className="tasks-section" aria-busy="true">
+        <header className="settings-header">
+          <h1>任务</h1>
+          <p>正在连接 Gateway 并建立实时监控…</p>
+        </header>
+      </main>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <main className="tasks-section">
+        <header className="settings-header">
+          <h1>任务</h1>
+          <p>任务账本读取失败，稍后自动重试。</p>
+        </header>
+      </main>
+    );
+  }
+
+  const data = state.data;
+  const tasks = data?.tasks || [];
+  const activeCount = tasks.filter((task) => task.status === "running" || task.status === "queued").length;
+  const filters = [
+    { id: "active", label: `进行中 (${activeCount})` },
+    { id: "all", label: `全部 (${tasks.length})` },
+    { id: "succeeded", label: "已完成" },
+    { id: "failed", label: "失败/中断" },
+  ];
+  const now = Date.now();
+  const STALE_MS = Math.max(10, monitor.staleThresholdSec) * 1000; // 无活动判定阈值（设置页可调）
+
+  return (
+    <main className="tasks-section">
+      <header className="settings-header">
+        <div className="tasks-title-row">
+          <h1>任务</h1>
+          <span
+            className={live ? "live-indicator live-indicator--on" : "live-indicator"}
+            title={live ? "每 3 秒自动同步 Gateway" : "未在同步：检查 Gateway 配置或网络"}
+          >
+            <span className="live-dot" />
+            {live ? "实时监控中" : "未同步"}
+          </span>
+          {lastSync && (
+            <span className="tasks-last-sync">
+              更新于 {new Date(lastSync).toLocaleTimeString("zh-CN", { hour12: false })}
+            </span>
+          )}
+        </div>
+        <p>
+          OpenClaw Gateway 的后台任务台账（subagent / cron / CLI / ACP），每 3 秒自动同步。
+          说明：普通对话轮次不计入台账；subagent 派工、cron、CLI 才是任务。
+          本地账本保留全部历史；官方侧终态记录 7 天后清理。
+        </p>
+      </header>
+
+      <div className="tasks-toolbar">
+        <div className="tasks-filters" role="tablist" aria-label="任务筛选">
+          {filters.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              role="tab"
+              aria-selected={state.filter === filter.id}
+              className={state.filter === filter.id ? "is-selected" : ""}
+              onClick={() => setState((current) => ({ ...current, filter: filter.id }))}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="ledger-button ledger-button--secondary"
+          disabled={busy}
+          onClick={handleRefresh}
+        >
+          <ArrowsClockwise size={14} /> {busy ? "拉取中…" : "立即同步"}
+        </button>
+      </div>
+
+      {feedback && (
+        <p className={feedback.tone === "error" ? "tasks-feedback tasks-feedback--error" : "tasks-feedback tasks-feedback--success"}>
+          {feedback.message}
+        </p>
+      )}
+      {data?.demo && (
+        <p className="tasks-feedback">浏览器预览：展示演示数据；Tauri 桌面端读取真实任务账本。</p>
+      )}
+      {data?.loadError && <p className="tasks-feedback tasks-feedback--error">{data.loadError}</p>}
+
+      {agentsSnap?.agents?.length > 0 && (
+        <div className="agent-grid">
+          <div className="agent-grid-title">Agent 会话活动</div>
+          <div className="agent-cards">
+            {agentsSnap.agents.map((agent) => {
+              const lastSeen = Number.isFinite(agent.lastActiveMs) ? agent.lastActiveMs : 0;
+              const stale = agent.active && now - lastSeen > STALE_MS;
+              const shortId = agent.agentId.includes(":")
+                ? agent.agentId.slice(agent.agentId.indexOf(":") + 1)
+                : agent.agentId;
+              return (
+                <div
+                  key={agent.agentId}
+                  className={
+                    agent.active
+                      ? stale
+                        ? "agent-card agent-card--stale"
+                        : "agent-card agent-card--active"
+                      : "agent-card"
+                  }
+                >
+                  <div className="agent-card-head">
+                    <span className="agent-status-dot" />
+                    <strong>{agent.name || shortId}</strong>
+                  </div>
+                  <div className="agent-card-meta">
+                    <span>{shortId}</span>
+                    {agent.runningTasks > 0 && <span>{agent.runningTasks} 个活动会话</span>}
+                    {lastSeen > 0 && <span>活动 {formatTaskAge(lastSeen)}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {tasks.length === 0 && !agentsSnap?.agents?.some((agent) => agent.active) ? (
+        <div className="tasks-empty">
+          <ListChecks size={30} weight="light" />
+          <p>
+            还没有任务记录，也没有活跃的 Agent 会话。派一个 subagent 任务，
+            几秒内这里就会出现"运行中"条目。本机 Gateway 已配置时无需手动操作。
+          </p>
+        </div>
+      ) : tasks.length > 0 ? (
+        <div className="task-list">
+          {tasks.map((task) => {
+            const isActive = task.status === "running" || task.status === "queued";
+            const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
+            const stale = isActive && now - lastSeen > STALE_MS;
+            return (
+              <article key={`${task.gateway}:${task.taskId}`} className="task-row">
+                <div className="task-row-main">
+                  <div className="task-row-title">
+                    <TaskStatusPill status={task.status} />
+                    {stale && <span className="task-pill task-pill--stale">疑似卡住</span>}
+                    <strong>{task.title || task.label || task.taskId}</strong>
+                  </div>
+                  <div className="task-row-meta">
+                    <span className="task-meta-gateway">{task.gateway}</span>
+                    <span>{task.runtime || task.kind || "任务"}</span>
+                    {task.agentId && <span>{task.agentId}</span>}
+                    {Number.isFinite(task.startedAtMs) && (
+                      <span>已运行 {formatTaskDuration(task.startedAtMs, task.endedAtMs) || "—"}</span>
+                    )}
+                    <span>最近活动 {formatTaskAge(lastSeen)}</span>
+                  </div>
+                  {task.error && <p className="task-row-error">{task.error}</p>}
+                </div>
+              </article>
+            );
+          })}
+          {state.filter !== "all" && <p className="tasks-empty">当前筛选下暂无任务。</p>}
+        </div>
+      ) : null}
+    </main>
+  );
+}
+
 function ReportsSection({ report }) {
   const [view, setView] = useState("heatmap");
   const [rangeWeeks, setRangeWeeks] = useState(() => {
@@ -4993,6 +5502,7 @@ export function App() {
     () => visibleAgentId(localStorage.getItem("metrik:quotaAgent") || "codex"),
   );
   const [activeNav, setActiveNav] = useState(initialNav);
+  const [gateways, setGateways] = useState(() => loadGatewayConfig());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pinned, setPinned] = useState(() => localStorage.getItem("metrik:pinned") === "true");
   const [pinnedHoverMode, setPinnedHoverMode] = useState(() =>
@@ -6054,6 +6564,8 @@ export function App() {
         ) : activeNav === "settings" ? (
           <SettingsSection
             onSnapshotRefresh={() => loadSnapshot(currentPeriod.current)}
+            gateways={gateways}
+            onGatewaysChanged={setGateways}
             widgetAgents={widgetAgents}
             onToggleWidgetAgent={handleToggleWidgetAgent}
             onMoveWidgetAgent={handleMoveWidgetAgent}
@@ -6087,6 +6599,8 @@ export function App() {
           />
         ) : activeNav === "reports" ? (
           <ReportsSection report={report} />
+        ) : activeNav === "tasks" ? (
+          <TasksSection gateways={gateways} onGatewaysChanged={() => {}} />
         ) : activeNav === "usage" ? (
           <>
             <PeriodControl period={period} onChange={setPeriod} fullWidthArea />

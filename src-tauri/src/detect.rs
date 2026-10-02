@@ -144,6 +144,15 @@ pub fn table() -> Vec<AgentProbe> {
             probe: Probe::Paths(vec![home.join(".hermes").join("state.db")]),
         },
         AgentProbe {
+            // OpenClaw 的数据根：与 OpenclawAdapter::detected() 同源（扫描
+            // agents/*/sessions/*.jsonl，探针看 agents 目录本身）。
+            id: "openclaw",
+            probe: Probe::Paths(vec![
+                home.join(".openclaw").join("agents"),
+                home.join(".openclaw-autoclaw").join("agents"),
+            ]),
+        },
+        AgentProbe {
             // 与 CursorAdapter::detected() 同源：Cursor 的全局状态库。
             id: "cursor",
             probe: Probe::Paths(vec![crate::adapters::cursor_state_db()]),
@@ -237,6 +246,14 @@ mod tests {
         assert_eq!(
             paths(by_id("hermes")),
             vec![home.join(".hermes").join("state.db")]
+        );
+        // openclaw 探针与 OpenclawAdapter::detected() 同源：agents 目录本身。
+        assert_eq!(
+            paths(by_id("openclaw")),
+            vec![
+                home.join(".openclaw").join("agents"),
+                home.join(".openclaw-autoclaw").join("agents")
+            ]
         );
         assert_eq!(
             paths(by_id("cursor")),
