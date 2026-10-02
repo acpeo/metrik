@@ -7104,15 +7104,16 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
    （taskChains.js；字段语义在北斗网关实测过）。单跳不成链不渲染。 */
 .task-chain {
   padding: 1px 11px 3px 15px;
-  /* 与任务行同一条发丝底线：链路是独立的一条带，不贴给上一行也不贴给下一行 */
-  box-shadow: 0 1px rgba(255, 255, 255, 0.08);
 }
 
 /* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮横移。
-   字号回展开卡原档 10.5px（迷你条的 13px 是胶囊尺寸，别带进来）。 */
+   字号回展开卡原档 10.5px；两端渐隐遮罩去掉——胶囊里是"还能滚"的暗示，
+   展开卡里链路几乎满宽，头尾星位正好落进渐隐区，字会看不清。 */
 .task-chain .tasks-mini-strip {
   cursor: default;
   font-size: 10.5px;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .task-chain-hop {
@@ -7202,9 +7203,6 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-light .widget-task-row {
   box-shadow: 0 1px rgba(31, 33, 36, 0.06);
 }
-.widget-shell--transparent.widget-shell--glass-light .task-chain {
-  box-shadow: 0 1px rgba(31, 33, 36, 0.06);
-}
 .widget-shell--transparent.widget-shell--glass-light .widget-task-accent {
   background: rgba(31, 33, 36, 0.22);
 }
@@ -7242,9 +7240,6 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   box-shadow: inset 0 0 0 1px rgba(31, 33, 36, 0.1);
 }
 .widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .widget-task-row {
-  box-shadow: 0 1px rgba(255, 255, 255, 0.06);
-}
-.widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .task-chain {
   box-shadow: 0 1px rgba(255, 255, 255, 0.06);
 }
 
