@@ -2061,10 +2061,13 @@ function TasksWidgetWindow({
           onClick={expand}
           title={`${hasChain ? `${chainText} | ` : ""}${agentName ? `${agentName} · ` : ""}${title}${tone === "failed" ? "（失败）" : ""} · 点击展开`}
         >
-          <i
-            className={`tasks-mini-dot ${tone === "failed" ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
-            aria-hidden="true"
-          />
+          {/* 链内当前跳自带脉冲，行首状态点是重复噪音（尤其胶卷滑走后）——只有无链行保留 */}
+          {!hasChain && (
+            <i
+              className={`tasks-mini-dot ${tone === "failed" ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
+              aria-hidden="true"
+            />
+          )}
           {hasChain ? (
             <ChainFilmstrip hops={hops} currentTaskId={task.taskId} agentNameMap={agentNameMap} />
           ) : (
