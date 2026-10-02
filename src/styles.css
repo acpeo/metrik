@@ -6422,9 +6422,10 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   display: grid;
   grid-template-columns: 4px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0 7px;
-  padding: 7px 8px 7px 0;
-  font-size: 12px;
+  gap: 0 9px;
+  min-height: 46px;
+  padding: 8px 12px 8px 0;
+  font-size: 12.5px;
   line-height: 1.35;
   box-shadow: 0 1px rgba(255, 255, 255, 0.07);
 }
@@ -6435,7 +6436,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .widget-task-accent {
   width: 4px;
-  height: 20px;
+  height: 26px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.24);
   justify-self: start;
@@ -6458,7 +6459,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .widget-task-row small {
@@ -6545,7 +6547,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .tasks-window-body .widget-tasks-agents {
-  padding-top: 8px;
+  padding: 8px 8px 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .monitor-field--check {

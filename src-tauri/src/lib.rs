@@ -1437,7 +1437,7 @@ fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String> {
         tauri::WebviewUrl::App("index.html?view=tasks".into()),
     )
     .title("Metrik 任务")
-    .inner_size(300.0, 432.0)
+    .inner_size(300.0, 384.0)
     .decorations(false)
     .transparent(true)
     .shadow(false)

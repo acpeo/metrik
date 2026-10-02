@@ -1972,7 +1972,7 @@ function TasksWidgetWindow({
           className="tasks-mini"
           onClick={() => {
             setCollapsed(false);
-            runWindowAction(() => resizeCurrentWindow(300, 432));
+            runWindowAction(() => resizeCurrentWindow(300, 384));
           }}
           title="展开任务追踪"
         >
@@ -2012,11 +2012,11 @@ function TasksWidgetWindow({
         startWindowDragging();
       }}>
         <span className="widget-brand">
-          <span className={feed.live ? "live-indicator live-indicator--on" : "live-indicator"}>
-            <span className="live-dot" />
-            {feed.live ? "实时" : "未同步"}
-          </span>
           任务追踪
+          <span
+            className={`status-dot ${feed.live ? "" : "status-dot--error"}`}
+            title={feed.live ? "实时同步中" : "未同步"}
+          />
         </span>
         <div className="window-actions">
           <button
