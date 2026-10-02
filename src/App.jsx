@@ -5627,8 +5627,13 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
       title="点击展开任务追踪 · 滚轮滑动查看链路"
       onWheel={(event) => {
         const target = event.currentTarget;
-        if (vertical) target.scrollTop += event.deltaY + event.deltaX;
-        else target.scrollLeft += event.deltaY + event.deltaX;
+        // 行模式滚轮（deltaMode 1，deltaY≈3）按行高归一，否则一格只挪 3px；
+        // 像素模式一格 ~100px ≈ 2 跳，钳到 60px = 正好一个跳位
+        const unit = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? target.clientHeight : 1;
+        const delta = (event.deltaY + event.deltaX) * unit;
+        const step = Math.sign(delta) * Math.min(Math.abs(delta), 60);
+        if (vertical) target.scrollTop += step;
+        else target.scrollLeft += step;
       }}
     >
       {hops.map((hop, index) => {
