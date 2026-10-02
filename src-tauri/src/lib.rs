@@ -1437,7 +1437,7 @@ fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String> {
         tauri::WebviewUrl::App("index.html?view=tasks".into()),
     )
     .title("Metrik 任务")
-    .inner_size(300.0, 384.0)
+    .inner_size(320.0, 384.0)
     .decorations(false)
     .transparent(true)
     .shadow(false)
@@ -1448,7 +1448,7 @@ fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(main) = app.get_webview_window("main") {
         if let Ok(outer) = main.outer_position() {
             let scale = main.scale_factor().unwrap_or(1.0);
-            builder = builder.position((outer.x as f64 + 336.0) / scale, outer.y as f64 / scale);
+            builder = builder.position((outer.x as f64 + 356.0) / scale, outer.y as f64 / scale);
         }
     }
     builder.build().map_err(|error| error.to_string())?;

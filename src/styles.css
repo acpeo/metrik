@@ -6424,27 +6424,33 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   align-items: center;
   gap: 0 9px;
   min-height: 46px;
-  padding: 8px 12px 8px 0;
+  padding: 6px 11px 6px 0;
   font-size: 12.5px;
   line-height: 1.35;
-  box-shadow: 0 1px rgba(255, 255, 255, 0.07);
+  box-shadow: 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .widget-task-row:last-of-type {
   box-shadow: none;
 }
 
+/* 状态色竖条与 Agent 行的 .widget-agent-accent 同一语言：
+   3px 宽、scaleY(0.4) 收成小短纤（视觉 ~13px）、48% 透明度——
+   是个指示记号，不是一整根色柱（2026-10-02 用户圈红纠偏）。 */
 .widget-task-accent {
-  width: 4px;
-  height: 26px;
-  border-radius: 2px;
+  width: 3px;
+  height: 34px;
+  border-radius: 0 3px 3px 0;
+  opacity: 0.48;
+  transform: scaleY(0.4);
   background: rgba(255, 255, 255, 0.24);
   justify-self: start;
 }
 
-.widget-task-accent--running { background: #3aa76d; }
-.widget-task-accent--queued { background: #7fabef; }
-.widget-task-accent--failed { background: #ec8468; }
+/* 状态色取深色 HUD 既有 token：绿 #6fc49a / warn 黄 #e8b04a / critical 红 #ec7a63 */
+.widget-task-accent--running { background: #6fc49a; }
+.widget-task-accent--queued { background: #e8b04a; }
+.widget-task-accent--failed { background: #ec7a63; }
 
 .widget-task-main {
   display: flex;
@@ -6459,13 +6465,14 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 560;
 }
 
 .widget-task-row small {
   flex: none;
   font-size: 11px;
+  font-weight: 560;
   opacity: 0.58;
   font-variant-numeric: tabular-nums;
 }
@@ -6515,40 +6522,96 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   padding: 6px 10px 6px;
 }
 
+/* 与 Agent 行列表同一张卡面（深色 HUD 的白 0.06 + 白描边）、同一 16px 圆角；
+   行发丝线直接贴到卡缘（body 无横向 padding，由行自带 11px 右距）。 */
 .tasks-window-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   border-top: none;
-  padding: 5px 4px;
+  padding: 3px 0;
   scrollbar-width: thin;
-  /* 与 Agent 行列表同一张卡面（深色 HUD 的白 0.06 + 白描边） */
+  scrollbar-color: rgba(127, 130, 136, 0.4) transparent;
   background: rgba(255, 255, 255, 0.06);
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.09),
     inset 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.widget-task-row--ended {
-  opacity: 0.58;
+.tasks-window-body::-webkit-scrollbar {
+  width: 5px;
 }
 
-.widget-task-row--ended .widget-task-title {
-  text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+.tasks-window-body::-webkit-scrollbar-track {
+  background: transparent;
 }
+
+.tasks-window-body::-webkit-scrollbar-thumb {
+  background: rgba(127, 130, 136, 0.4);
+  border-radius: 3px;
+}
+
+.widget-shell--transparent .tasks-window-body {
+  scrollbar-color: rgba(255, 255, 255, 0.26) transparent;
+}
+
+.widget-shell--transparent .tasks-window-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+/* 近期完成的轻量行：小状态点 + 暗标题 + 时长，没有 pill 也没有竖条，
+   不和运行中任务抢视线。 */
+.widget-task-brief {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 8px;
+  min-height: 30px;
+  padding: 3px 11px 3px 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.widget-task-brief .widget-task-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  opacity: 0.66;
+}
+
+.widget-task-brief small {
+  font-size: 10.5px;
+  opacity: 0.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.widget-task-dot {
+  width: 6px;
+  height: 6px;
+  justify-self: center;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+}
+
+.widget-task-dot--done { background: #6fc49a; opacity: 0.8; }
+.widget-task-dot--failed { background: #ec7a63; opacity: 0.9; }
+.widget-task-dot--neutral { background: rgba(255, 255, 255, 0.35); }
 
 .tasks-window-divider {
   margin: 7px 0 2px;
+  padding-left: 15px;
   font-size: 10px;
   letter-spacing: 0.08em;
   opacity: 0.5;
 }
 
 .tasks-window-body .widget-tasks-agents {
-  padding: 8px 8px 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 8px 11px 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tasks-window-body .widget-tasks-empty {
+  padding: 0 12px;
 }
 
 .monitor-field--check {
@@ -6576,24 +6639,24 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   color: #6fc49a;
 }
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--queued {
-  background: rgba(127, 171, 239, 0.16);
-  color: #9ec1f5;
+  background: rgba(232, 176, 74, 0.16);
+  color: #e8b04a;
 }
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--succeeded {
   background: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.55);
 }
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--failed {
-  background: rgba(236, 132, 104, 0.16);
-  color: #ec9a80;
+  background: rgba(236, 122, 99, 0.16);
+  color: #ec7a63;
 }
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--neutral {
   background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.5);
 }
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-pill--stale {
-  background: rgba(224, 150, 30, 0.2);
-  color: #e0b060;
+  background: rgba(232, 176, 74, 0.18);
+  color: #e8b04a;
 }
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .live-indicator {
   background: rgba(255, 255, 255, 0.07);
@@ -6661,9 +6724,13 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-light .widget-task-accent {
   background: rgba(31, 33, 36, 0.22);
 }
-.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--running { background: #2f9464; }
-.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--queued { background: #5f8fd6; }
-.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--failed { background: #d0653f; }
+/* 浅色档状态色 = 浅面板 pill 字色（#1f7a4d 绿 / #8f681f 黄 / #a1402e 红） */
+.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--running { background: #1f7a4d; }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--queued { background: #8f681f; }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--failed { background: #a1402e; }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-dot--done { background: #1f7a4d; }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-dot--failed { background: #a1402e; }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-dot--neutral { background: rgba(31, 33, 36, 0.3); }
 .widget-shell--transparent.widget-shell--glass-light .widget-agent-chip {
   border-color: rgba(31, 33, 36, 0.14);
   background: rgba(255, 255, 255, 0.5);

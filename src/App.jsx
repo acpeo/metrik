@@ -1951,7 +1951,7 @@ function TasksWidgetWindow({
   const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
   const recent = tasks
     .filter((task) => task.status !== "running" && task.status !== "queued")
-    .slice(0, 8);
+    .slice(0, 6);
   const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
   const now = Date.now();
   const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
@@ -1972,7 +1972,7 @@ function TasksWidgetWindow({
           className="tasks-mini"
           onClick={() => {
             setCollapsed(false);
-            runWindowAction(() => resizeCurrentWindow(300, 384));
+            runWindowAction(() => resizeCurrentWindow(320, 384));
           }}
           title="展开任务追踪"
         >
@@ -1983,15 +1983,12 @@ function TasksWidgetWindow({
       </main>
     );
   }
-  const renderRow = (task, dimmed) => {
+  // 运行中/排队：完整行（状态 pill + 状态色小竖条 + 标题 + 时长）。
+  const renderActiveRow = (task) => {
     const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
-    const isActiveState = task.status === "running" || task.status === "queued";
-    const stale = isActiveState && now - lastSeen > staleMs;
+    const stale = now - lastSeen > staleMs;
     return (
-      <div
-        className={`widget-task-row${dimmed ? " widget-task-row--ended" : ""}`}
-        key={`${task.gateway}:${task.taskId}`}
-      >
+      <div className="widget-task-row" key={`${task.gateway}:${task.taskId}`}>
         <i className={`widget-task-accent ${taskAccentClass(task.status)}`} aria-hidden="true" />
         <span className="widget-task-main">
           <TaskStatusPill status={task.status} />
@@ -1999,6 +1996,25 @@ function TasksWidgetWindow({
           <span className="widget-task-title" title={task.title || task.taskId}>
             {task.title || task.taskId}
           </span>
+        </span>
+        <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
+      </div>
+    );
+  };
+  // 近期完成：轻量行——一个小状态点 + 暗标题 + 时长，不与运行中任务抢视线
+  // （原小组件里次要信息都是"点 + 弱文字"语言，如活跃 Agent 的 status dot）。
+  const renderBriefRow = (task) => {
+    const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
+    const tone = task.status === "failed" || task.status === "timed_out" || task.status === "lost"
+      ? "failed"
+      : task.status === "cancelled"
+        ? "neutral"
+        : "done";
+    return (
+      <div className="widget-task-brief" key={`${task.gateway}:${task.taskId}`}>
+        <i className={`widget-task-dot widget-task-dot--${tone}`} aria-hidden="true" />
+        <span className="widget-task-title" title={task.title || task.taskId}>
+          {task.title || task.taskId}
         </span>
         <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
       </div>
@@ -2018,7 +2034,7 @@ function TasksWidgetWindow({
             title={feed.live ? "实时同步中" : "未同步"}
           />
         </span>
-        <div className="window-actions">
+        <div className="window-actions window-actions--compact">
           <button
             type="button"
             className="window-action"
@@ -2052,7 +2068,7 @@ function TasksWidgetWindow({
             aria-pressed={pinned}
             title={pinned ? "取消置顶" : "置顶"}
           >
-            <PushPinSimple size={16} weight={pinned ? "fill" : "light"} aria-hidden="true" />
+            <PushPinSimple size={17} weight={pinned ? "fill" : "light"} aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -2061,7 +2077,7 @@ function TasksWidgetWindow({
             aria-label="最小化"
             title="最小化"
           >
-            <Minus size={16} weight="light" aria-hidden="true" />
+            <Minus size={17} weight="light" aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -2070,7 +2086,7 @@ function TasksWidgetWindow({
             aria-label="关闭任务小组件"
             title="关闭"
           >
-            <X size={15} weight="light" aria-hidden="true" />
+            <X size={17} weight="light" aria-hidden="true" />
           </button>
         </div>
       </header>
@@ -2081,9 +2097,9 @@ function TasksWidgetWindow({
               {tasks.length ? "暂无任务记录" : "等待首次同步…（主窗口 设置 → 任务追踪 配置 Gateway）"}
             </p>
           )}
-          {active.map((task) => renderRow(task, false))}
+          {active.map((task) => renderActiveRow(task))}
           {active.length > 0 && recent.length > 0 && <p className="tasks-window-divider">近期完成</p>}
-          {recent.map((task) => renderRow(task, true))}
+          {recent.map((task) => renderBriefRow(task))}
           {agents.length > 0 && (
             <div className="widget-tasks-agents">
               {agents.slice(0, 6).map((agent) => {
