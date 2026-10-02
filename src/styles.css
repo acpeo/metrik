@@ -6909,7 +6909,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   border: 0;
   font: inherit;
   color: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   text-align: left;
   overflow-x: auto;

@@ -2019,10 +2019,11 @@ function TasksWidgetWindow({
   })();
   // 窗口尺寸：横条=跑马灯 244×36；竖条=计数格三格固定（44px/格，不随数据伸缩，
   // 与原小组件"行集合格子不藏"同一哲学：窗口高度不跳）。
+  // 长度 = 正好显示 3 个 agent（用户指定）；更长的链由胶卷滚动承担
   const miniSize = (vertical, controlsOpenState) =>
     vertical
-      ? { width: 42, height: controlsOpenState ? 392 : 240 }
-      : { width: controlsOpenState ? 384 : 300, height: 36 };
+      ? { width: 42, height: controlsOpenState ? 348 : 196 }
+      : { width: controlsOpenState ? 344 : 260, height: 36 };
   // 尺寸变化统一走这一个副作用（折叠/开合/切向/行数），处理器只改状态。
   useLayoutEffect(() => {
     if (!collapsed) return;
