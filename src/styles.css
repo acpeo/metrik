@@ -7106,6 +7106,17 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   padding: 1px 11px 3px 15px;
 }
 
+/* 有链路的任务：行 + 链路同组，组底线替代行底线——链路在行与本组分隔线之间，
+   不被任务行的底线隔在外面。 */
+.widget-task-group {
+  box-shadow: 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.widget-task-group .widget-task-row,
+.widget-shell--transparent .widget-task-group .widget-task-row {
+  box-shadow: none;
+}
+
 /* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮横移。
    字号回展开卡原档 10.5px；两端渐隐遮罩去掉——胶囊里是"还能滚"的暗示，
    展开卡里链路几乎满宽，头尾星位正好落进渐隐区，字会看不清。 */
@@ -7203,6 +7214,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-light .widget-task-row {
   box-shadow: 0 1px rgba(31, 33, 36, 0.06);
 }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-group {
+  box-shadow: 0 1px rgba(31, 33, 36, 0.06);
+}
 .widget-shell--transparent.widget-shell--glass-light .widget-task-accent {
   background: rgba(31, 33, 36, 0.22);
 }
@@ -7242,6 +7256,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .widget-task-row {
   box-shadow: 0 1px rgba(255, 255, 255, 0.06);
 }
+.widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .widget-task-group {
+  box-shadow: 0 1px rgba(255, 255, 255, 0.06);
+}
 
 /* 透明档（白墨）：发丝线换浅色一档 */
 .widget-shell--transparent.widget-shell--glass-ink-light .tasks-card {
@@ -7249,6 +7266,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 .widget-shell--transparent.widget-shell--glass-ink-light .widget-task-row {
+  box-shadow: 0 1px rgba(255, 255, 255, 0.12);
+}
+.widget-shell--transparent.widget-shell--glass-ink-light .widget-task-group {
   box-shadow: 0 1px rgba(255, 255, 255, 0.12);
 }
 .widget-shell--transparent.widget-shell--glass-ink-light .task-chain {

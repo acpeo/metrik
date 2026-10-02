@@ -2316,18 +2316,28 @@ function TasksWidgetWindow({
             </p>
           )}
           <div className="tasks-card">
-            {active.map((task) => (
-              <Fragment key={`${task.gateway}:${task.taskId}`}>
-                {renderActiveRow(task)}
-                {task.status === "running" && (
+            {active.map((task) => {
+              const hops = task.status === "running" ? chainHopsFor(task, chainIndex) : [];
+              if (hops.length < 2) {
+                return (
+                  <Fragment key={`${task.gateway}:${task.taskId}`}>
+                    {renderActiveRow(task)}
+                  </Fragment>
+                );
+              }
+              // 有链路的任务：行 + 链路包成一组，底线挪到组底（链路紧贴自己的
+              // 任务，不被任务行的分隔线隔在外面）。
+              return (
+                <div className="widget-task-group" key={`${task.gateway}:${task.taskId}`}>
+                  {renderActiveRow(task)}
                   <TaskChainStepper
-                    hops={chainHopsFor(task, chainIndex)}
+                    hops={hops}
                     currentTaskId={task.taskId}
                     agentNameMap={agentNameMap}
                   />
-                )}
-              </Fragment>
-            ))}
+                </div>
+              );
+            })}
           </div>
           {usageSessions.length > 0 && (
             <div className="tasks-card tasks-usage-card">
