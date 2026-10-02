@@ -6890,6 +6890,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   min-width: 0;
   align-items: center;
   gap: 3px;
+  font-size: 12px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -6902,6 +6903,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .tasks-mini-strip .task-chain-hop {
   flex: none;
+  gap: 1px;
 }
 
 .tasks-mini-strip .task-chain-hop--current .task-chain-agent {
