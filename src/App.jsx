@@ -2388,10 +2388,12 @@ function TasksWidgetWindow({
                 );
               }
               // 有链路的任务：行 + 链路包成一组，底线挪到组底。
-              // 链路本体二选一：竖直时间线（默认）/ 横向胶片条，标题栏切换。
+              // 链路本体二选一：竖直时间线（进度挂在当前跳行下）/ 横排速览
+              //（速览塞不下，进度行插在任务行和链路之间），标题栏切换。
               return (
                 <div className="widget-task-group" key={`${task.gateway}:${task.taskId}`}>
                   {renderActiveRow(task)}
+                  {chainStyle === "strip" && renderProgressLine(task)}
                   {chainStyle === "strip" ? (
                     <div className="task-chain">
                       <ChainFilmstrip
