@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -51,6 +51,7 @@ import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
 import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
+import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor } from "./taskChains.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow, isBalanceWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -1966,6 +1967,9 @@ function TasksWidgetWindow({
   const tasks = feed.tasks?.tasks || [];
   const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
   const now = Date.now();
+  // 链路索引 + agent 显示名（北斗星名）。轮询每拍重建，任务量 ≤300 很便宜。
+  const chainIndex = useMemo(() => buildTaskChains(tasks), [feed.tasks]);
+  const agentNameMap = useMemo(() => buildAgentNameMap(feed.agents?.agents), [feed.agents]);
   // 失败/完成的口径 = 近 24 小时内结束的任务（账本保留 7 天，不设窗口的话
   // 数字只涨不清，就成了历史累计而不是"当前这批工作"的状态）。
   const recentWindowMs = 24 * 60 * 60 * 1000;
@@ -2297,7 +2301,18 @@ function TasksWidgetWindow({
               {tasks.length ? "暂无任务记录" : "等待首次同步…（主窗口 设置 → 任务追踪 配置 Gateway）"}
             </p>
           )}
-          {active.map((task) => renderActiveRow(task))}
+          {active.map((task) => (
+            <Fragment key={`${task.gateway}:${task.taskId}`}>
+              {renderActiveRow(task)}
+              {task.status === "running" && (
+                <TaskChainStepper
+                  hops={chainHopsFor(task, chainIndex)}
+                  currentTaskId={task.taskId}
+                  agentNameMap={agentNameMap}
+                />
+              )}
+            </Fragment>
+          ))}
           {active.length > 0 && recent.length > 0 && <p className="tasks-window-divider">近期完成</p>}
           {recent.map((task) => renderBriefRow(task))}
           {agents.length > 0 && (
@@ -5539,6 +5554,39 @@ const TASK_STATUS_META = {
 function TaskStatusPill({ status }) {
   const meta = TASK_STATUS_META[status] || { label: status || "未知", className: "task-pill--neutral" };
   return <span className={`task-pill ${meta.className}`}>{meta.label}</span>;
+}
+
+/// 任务链路 stepper：链上每跳 = agent 名 + 状态符（✓ 完成 / ● 进行中 / ○ 待跑），
+/// 完成跳带耗时。单跳不成链不渲染——没有链路信息的行保持干净。
+/// 链从 runId 分组与 childSessionKey→sessionKey 父子边拼出（见 taskChains.js）。
+function TaskChainStepper({ hops, currentTaskId, agentNameMap }) {
+  if (!hops || hops.length < 2) return null;
+  return (
+    <div className="task-chain" aria-label="任务链路">
+      {hops.map((hop, index) => {
+        const done = hop.status === "succeeded";
+        const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
+        const pending = hop.status === "queued";
+        const tone = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
+        const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
+        const duration = (formatTaskDuration(hop.startedAtMs, hop.endedAtMs) || "")
+          .replace(/ /g, "")
+          .replace(/0秒$/, "")
+          .replace(/0分$/, "");
+        const state = done ? "已完成" : failed ? "失败" : pending ? "排队中" : "进行中";
+        return (
+          <Fragment key={`${hop.gateway ?? ""}:${hop.taskId}`}>
+            {index > 0 && <i className="task-chain-link" aria-hidden="true" />}
+            <span className={`task-chain-hop task-chain-hop--${tone}`} title={`${name} · ${state}${duration ? ` · ${duration}` : ""}`}>
+              <span className="task-chain-agent">{name}</span>
+              <span className="task-chain-glyph" aria-hidden="true">{done ? "✓" : failed ? "✕" : pending ? "○" : "●"}</span>
+              {duration && <small>{duration}</small>}
+            </span>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
 }
 
 function TasksSection({ gateways, onGatewaysChanged }) {
