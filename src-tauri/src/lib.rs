@@ -1425,8 +1425,10 @@ fn open_expanded_window(app: tauri::AppHandle, nav: Option<String>) -> Result<()
 
 /// 任务追踪小组件：独立小窗（index.html?view=tasks）。已开着则关闭——前端把它当开关用。
 /// 这是 Windows 上第一扇运行时创建的附窗；透明/无边框与主窗口同一套参数。
+/// 必须是 async command：sync command 跑在主线程，而建窗要等事件循环腾出手，
+/// 主线程却在等命令返回——0.20.5 实测点按钮整个应用冻结（Tauri Windows 经典死锁）。
 #[tauri::command]
-fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String> {
+async fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("tasks-widget") {
         let _ = window.close();
         return Ok(());
@@ -1444,11 +1446,22 @@ fn toggle_tasks_widget_window(app: tauri::AppHandle) -> Result<(), String> {
     .resizable(false)
     .skip_taskbar(true)
     .focused(false);
-    // 锚在主窗口右侧同一高度，别每次都飘到屏幕中央。
+    // 锚在主窗口右侧同一高度，别每次都飘到屏幕中央。主窗贴右/贴下时按当前
+    // 显示器收口，免得小组件整扇悬在屏幕外，看起来像"没弹出来"。
     if let Some(main) = app.get_webview_window("main") {
         if let Ok(outer) = main.outer_position() {
             let scale = main.scale_factor().unwrap_or(1.0);
-            builder = builder.position((outer.x as f64 + 356.0) / scale, outer.y as f64 / scale);
+            let mut x = (outer.x as f64 + 356.0) / scale;
+            let mut y = outer.y as f64 / scale;
+            if let Ok(Some(monitor)) = main.current_monitor() {
+                let screen_w = monitor.size().width as f64 / scale;
+                let screen_h = monitor.size().height as f64 / scale;
+                let origin_x = monitor.position().x as f64 / scale;
+                let origin_y = monitor.position().y as f64 / scale;
+                x = x.clamp(origin_x, (origin_x + screen_w - 320.0).max(origin_x));
+                y = y.clamp(origin_y, (origin_y + screen_h - 384.0).max(origin_y));
+            }
+            builder = builder.position(x, y);
         }
     }
     builder.build().map_err(|error| error.to_string())?;
