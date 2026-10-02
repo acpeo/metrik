@@ -6680,78 +6680,92 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .tasks-mini {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   width: 100%;
   height: 100%;
-  padding: 0 5px 0 6px;
+  padding: 3px 4px;
+  gap: 2px;
   cursor: default;
   user-select: none;
 }
 
-.tasks-mini--vertical {
-  flex-direction: column;
-  align-items: stretch;
-  padding: 6px 3px 4px;
-  gap: 4px;
-}
-
-.tasks-mini-cell {
+.tasks-mini-row {
   position: relative;
   display: flex;
   flex: none;
   align-items: center;
-  gap: 5px;
-  min-height: 24px;
-  padding: 4px 6px;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 8px 0 10px;
   color: inherit;
   font: inherit;
   background: transparent;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   cursor: pointer;
+  text-align: left;
   transition: background-color 240ms var(--motion);
 }
 
-/* 横条格间发丝分隔（strip-cell 同款） */
-.tasks-mini:not(.tasks-mini--vertical) .tasks-mini-cell + .tasks-mini-cell::before {
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: -2px;
-  width: 1px;
-  background: currentColor;
-  opacity: 0.09;
-  pointer-events: none;
+.tasks-mini-row:hover { background: rgba(255, 255, 255, 0.07); }
+.widget-shell--glass-light .tasks-mini-row:hover { background: rgba(31, 33, 36, 0.06); }
+
+.tasks-mini-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.3;
 }
 
-.tasks-mini-cell:hover { background: rgba(255, 255, 255, 0.07); }
-.widget-shell--glass-light .tasks-mini-cell:hover { background: rgba(31, 33, 36, 0.06); }
-
-.tasks-mini-cell em {
-  color: inherit;
-  font-style: normal;
-  font-size: 11px;
-  font-weight: 600;
+.tasks-mini-row small {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.55;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
 }
 
-/* 零值格弱化（对齐 strip-cell--unavailable，不伪造数字） */
-.tasks-mini-cell--zero em { opacity: 0.4; }
-.tasks-mini-cell--zero .tasks-mini-dot { opacity: 0.35; }
+.tasks-mini-row--failed .tasks-mini-title { opacity: 0.72; }
 
-/* 竖条：格子立起来，点上数字下 */
-.tasks-mini--vertical .tasks-mini-cell {
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 5px 2px;
+/* 暂无运行中任务/未同步占位 */
+.tasks-mini-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 30px;
+  font-size: 11px;
+  opacity: 0.5;
+}
+
+/* 横条跑马灯：单行任务 + "+N" 提示 */
+.tasks-mini:not(.tasks-mini--vertical) { flex-direction: row; align-items: center; padding: 3px 4px 3px 6px; }
+
+.tasks-mini-ticker {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.tasks-mini-ticker .tasks-mini-row { flex: 1; min-width: 0; padding-left: 6px; }
+.tasks-mini-ticker .tasks-mini-title { font-size: 11.5px; }
+.tasks-mini-ticker .tasks-mini-row small { display: none; }
+
+.tasks-mini-more {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
 }
 
 .tasks-mini-dot {
   width: 6px;
   height: 6px;
+  flex: none;
   border-radius: 50%;
   background: color-mix(in srgb, currentColor 38%, transparent);
 }
@@ -6762,25 +6776,33 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .tasks-mini-dot--failed { background: #ec7a63; }
-.tasks-mini-dot--done { background: rgba(255, 255, 255, 0.35); }
-.widget-shell--glass-light .tasks-mini-dot--done { background: rgba(31, 33, 36, 0.3); }
 
-/* 控制槽：与格子间一条发丝竖线（strip-controls 同款）；竖条时改横线 */
+/* 控制槽：与行列表间一条发丝线（strip-controls 同款）；横条时改竖线 */
 .tasks-mini-controls {
   display: flex;
+  flex: none;
   align-items: center;
+  justify-content: flex-end;
+  gap: 1px;
+  margin-top: 1px;
+  padding-top: 3px;
+  box-shadow: 0 -1px color-mix(in srgb, currentColor 9%, transparent);
+}
+
+.tasks-mini:not(.tasks-mini--vertical) .tasks-mini-controls {
+  margin-top: 0;
   margin-left: 1px;
+  padding-top: 0;
   padding-left: 3px;
   box-shadow: -1px 0 color-mix(in srgb, currentColor 9%, transparent);
 }
 
-.tasks-mini--vertical .tasks-mini-controls {
-  flex-direction: column;
-  margin-left: 0;
-  margin-top: 1px;
-  padding-left: 0;
-  padding-top: 3px;
-  box-shadow: 0 -1px color-mix(in srgb, currentColor 9%, transparent);
+/* 控制槽里的同步状态灯：压成 6px 并去掉基线的上边距 */
+.tasks-mini-controls .status-dot {
+  width: 6px;
+  height: 6px;
+  margin: 0 3px 0 6px;
+  flex: none;
 }
 
 /* ── 任务小组件三档外观（跟随原项目的深色/浅色/透明档）────────────── */

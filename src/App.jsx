@@ -1986,32 +1986,49 @@ function TasksWidgetWindow({
     isMac: IS_MAC,
     loading: false,
   });
-  // 折叠态窗口尺寸：原胶囊条两形态 × 控制按钮开合，四类定值
-  // （格子 flex:none 不拉伸，窗口跟着形态走，不留伸展空白）。
-  const miniSize = (vertical, controlsOpenState) =>
-    vertical
-      ? { width: 42, height: controlsOpenState ? 252 : 144 }
-      : { width: controlsOpenState ? 260 : 156, height: 36 };
   // 窗口随控制开合变尺寸时 WebView 会发瞬态 pointerleave（原竖条踩过同一坑，
-  // 用"延时 + :hover 复核"跨过原生事务）：延时收控制，指针真离开才收。
+  // 用"延时 + :hover 复核"跨过原生事务）：延时收控制，指针真离开才收；
+  // 尺寸变化由下面的 useLayoutEffect 统一调窗，这里只改状态。
   const closeMiniControlsAfterLeave = () => {
     window.clearTimeout(miniLeaveTimerRef.current);
     miniLeaveTimerRef.current = window.setTimeout(() => {
       miniLeaveTimerRef.current = null;
       if (miniShellRef.current?.matches(":hover")) return;
       setMiniControlsOpen(false);
-      const closed = miniSize(miniOrientationRef.current === "vertical", false);
-      runWindowAction(() => resizeCurrentWindow(closed.width, closed.height));
     }, 260);
   };
+  // 折叠态 = 迷你任务列表：一行一个任务（状态点 + 标题 + 已跑时长）。
+  // 折叠时要一眼看到的是"哪些活儿在跑、跑了多久、谁挂了"——42px 窄条装不下
+  // 任何可读信息（字牌/计数都被用户否了），任务标题才是自解释的。
+  // 运行中在前（卡住的红点），近 24h 失败的跟在后面（红点），最多 5 行。
+  const miniRows = (() => {
+    const rows = active.slice(0, 5).map((task) => ({ task, tone: "running" }));
+    if (rows.length < 5) {
+      for (const task of recentlyEnded) {
+        if (rows.length >= 5) break;
+        if (task.status === "failed" || task.status === "timed_out" || task.status === "lost") {
+          rows.push({ task, tone: "failed" });
+        }
+      }
+    }
+    return rows;
+  })();
+  // 窗口尺寸随行数与控制开合：行 28px + 缝 2px，控制槽 26px。
+  const miniSize = (vertical, controlsOpenState, rowCount) =>
+    vertical
+      ? {
+          width: 232,
+          height: controlsOpenState ? Math.max(150, 130 + rowCount * 30) : Math.max(46, 40 + rowCount * 30),
+        }
+      : { width: controlsOpenState ? 324 : 244, height: 36 };
+  // 尺寸变化统一走这一个副作用（折叠/开合/切向/行数），处理器只改状态。
+  useLayoutEffect(() => {
+    if (!collapsed) return;
+    const dims = miniSize(miniOrientation === "vertical", miniControlsOpen, miniRows.length);
+    runWindowAction(() => resizeCurrentWindow(dims.width, dims.height));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsed, miniControlsOpen, miniOrientation, miniRows.length]);
   if (collapsed) {
-    // 折叠态 = 原项目胶囊条同款交互：默认竖条（用户指定），••• 里可切横条；
-    // ••• 就地展开控制按钮（置顶 / 切换方向 / 展开小组件 / 完整视图）。
-    // 失败/完成 = 近 24 小时（与展开卡"近期完成"同一口径，见 recentlyEnded）。
-    const failedCount = recentlyEnded.filter(
-      (task) => task.status === "failed" || task.status === "timed_out" || task.status === "lost",
-    ).length;
-    const doneCount = recentlyEnded.filter((task) => task.status === "succeeded").length;
     const miniVertical = miniOrientation === "vertical";
     const MiniOrientationIcon = miniVertical ? ArrowsLeftRight : ArrowsDownUp;
     const expand = () => {
@@ -2019,12 +2036,27 @@ function TasksWidgetWindow({
       setMiniControlsOpen(false);
       runWindowAction(() => resizeCurrentWindow(320, 384));
     };
-    const cells = [
-      { key: "running", count: active.length, label: `运行中 ${active.length}` },
-      { key: "failed", count: failedCount, label: `失败 ${failedCount}` },
-      { key: "done", count: doneCount, label: `近期完成 ${doneCount}` },
-    ];
-    const miniDimensions = miniSize(miniVertical, miniControlsOpen);
+    const renderMiniRow = ({ task, tone }) => {
+      const title = task.title || task.taskId;
+      const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
+      return (
+        <button
+          key={`${task.gateway}:${task.taskId}`}
+          type="button"
+          className={`tasks-mini-row${tone === "failed" ? " tasks-mini-row--failed" : ""}`}
+          onClick={expand}
+          title={`${title}${tone === "failed" ? "（失败）" : ""} · 点击展开`}
+        >
+          <i
+            className={`tasks-mini-dot ${tone === "failed" ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
+            aria-hidden="true"
+          />
+          <span className="tasks-mini-title">{title}</span>
+          <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
+        </button>
+      );
+    };
+    const miniDimensions = miniSize(miniVertical, miniControlsOpen, miniRows.length);
     return (
       <main
         ref={miniShellRef}
@@ -2050,37 +2082,38 @@ function TasksWidgetWindow({
             startWindowDragging();
           }}
         >
-          {cells.map((cell) => (
-            <button
-              key={cell.key}
-              type="button"
-              className={`tasks-mini-cell${cell.count ? "" : " tasks-mini-cell--zero"}`}
-              onClick={expand}
-              title={`${cell.label} · 点击展开`}
-            >
-              <i
-                className={`tasks-mini-dot ${
-                  cell.key === "running" && feed.live
-                    ? "tasks-mini-dot--on"
-                    : cell.key === "failed"
-                      ? "tasks-mini-dot--failed"
-                      : "tasks-mini-dot--done"
-                }`}
-                aria-hidden="true"
-              />
-              <em>{cell.count}</em>
-            </button>
-          ))}
+          {miniVertical ? (
+            <>
+              {miniRows.map(renderMiniRow)}
+              {miniRows.length === 0 && (
+                <span className="tasks-mini-empty" title={feed.live ? "暂无运行中任务" : "Gateway 未同步"}>
+                  {feed.live ? "暂无运行中任务" : "未同步"}
+                </span>
+              )}
+            </>
+          ) : (
+            // 横条 = 跑马灯：只显示第一个任务，多了用 +N 提示
+            <>
+              {miniRows.length > 0 ? (
+                <div className="tasks-mini-ticker">
+                  {renderMiniRow(miniRows[0])}
+                  {miniRows.length > 1 && <span className="tasks-mini-more">+{miniRows.length - 1}</span>}
+                </div>
+              ) : (
+                <span className="tasks-mini-empty">{feed.live ? "暂无运行中任务" : "未同步"}</span>
+              )}
+            </>
+          )}
           <div className="tasks-mini-controls">
+            <i
+              className={`status-dot ${feed.live ? "" : "status-dot--error"}`}
+              title={feed.live ? "实时同步中" : "未同步"}
+              aria-hidden="true"
+            />
             <button
               type="button"
               className={`strip-button ${miniControlsOpen ? "strip-button--active" : ""}`}
-              onClick={() => {
-                const next = !miniControlsOpen;
-                setMiniControlsOpen(next);
-                const target = miniSize(miniVertical, next);
-                runWindowAction(() => resizeCurrentWindow(target.width, target.height));
-              }}
+              onClick={() => setMiniControlsOpen(!miniControlsOpen)}
               aria-expanded={miniControlsOpen}
               title={miniControlsOpen ? "收起控制按钮" : "展开控制按钮"}
             >
@@ -2104,12 +2137,7 @@ function TasksWidgetWindow({
                 <button
                   type="button"
                   className="strip-button"
-                  onClick={() => {
-                    const nextVertical = !miniVertical;
-                    setMiniOrientation(nextVertical ? "vertical" : "horizontal");
-                    const target = miniSize(nextVertical, miniControlsOpen);
-                    runWindowAction(() => resizeCurrentWindow(target.width, target.height));
-                  }}
+                  onClick={() => setMiniOrientation(miniVertical ? "horizontal" : "vertical")}
                   aria-label={miniVertical ? "切换为横条" : "切换为竖条"}
                   title={miniVertical ? "切换为横条" : "切换为竖条"}
                 >
@@ -2195,11 +2223,7 @@ function TasksWidgetWindow({
           <button
             type="button"
             className="window-action"
-            onClick={() => {
-              setCollapsed(true);
-              const target = miniSize(miniOrientation === "vertical", false);
-              runWindowAction(() => resizeCurrentWindow(target.width, target.height));
-            }}
+            onClick={() => setCollapsed(true)}
             aria-label="折叠为迷你胶囊"
             title="折叠为迷你胶囊"
           >
