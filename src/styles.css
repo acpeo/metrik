@@ -6710,6 +6710,27 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .tasks-mini-row:hover { background: rgba(255, 255, 255, 0.07); }
 .widget-shell--glass-light .tasks-mini-row:hover { background: rgba(31, 33, 36, 0.06); }
 
+/* 跑马灯里的星名归属：谁在干（·分隔）+ 干什么 */
+/* 星名 = 署名层级：比任务标题小一档、弱一档（用户：agent 名字不要太大） */
+.tasks-mini-agent {
+  flex: none;
+  font-size: 10px;
+  font-weight: 560;
+  opacity: 0.66;
+}
+
+.tasks-mini-agent::after {
+  content: "·";
+  margin-left: 4px;
+  opacity: 0.5;
+}
+
+.tasks-mini-sep {
+  flex: none;
+  opacity: 0.4;
+  margin: 0 1px;
+}
+
 .tasks-mini-title {
   flex: 1;
   min-width: 0;
@@ -6861,6 +6882,17 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .tasks-mini .strip-button--menu { opacity: 0; }
 .tasks-mini:hover .strip-button--menu,
 .tasks-mini-controls--open .strip-button--menu { opacity: 1; }
+
+/* 跑马灯里的紧凑链：小一号、零外距，时长不进横条（tooltip 与展开卡里有） */
+.task-chain--mini {
+  margin: 0;
+  gap: 2px;
+  font-size: 9.5px;
+}
+
+.task-chain--mini .task-chain-hop { gap: 1px; }
+.task-chain--mini .task-chain-link { width: 8px; }
+.task-chain--mini .task-chain-agent { letter-spacing: -0.02em; }
 
 /* ── 任务链路 stepper（链路视图①）────────────────────────────────
    运行中任务行下方：agent 名 + 状态符（✓ 完成 / ● 进行中 / ○ 待跑）+ 耗时，

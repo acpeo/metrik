@@ -2022,7 +2022,7 @@ function TasksWidgetWindow({
   const miniSize = (vertical, controlsOpenState) =>
     vertical
       ? { width: 42, height: controlsOpenState ? 304 : 180 }
-      : { width: controlsOpenState ? 328 : 244, height: 36 };
+      : { width: controlsOpenState ? 384 : 300, height: 36 };
   // 尺寸变化统一走这一个副作用（折叠/开合/切向/行数），处理器只改状态。
   useLayoutEffect(() => {
     if (!collapsed) return;
@@ -2038,23 +2038,59 @@ function TasksWidgetWindow({
       setMiniControlsOpen(false);
       runWindowAction(() => resizeCurrentWindow(320, 384));
     };
-    const renderMiniRow = ({ task, tone }) => {
+    const renderMiniRow = ({ task, tone, withChain = false }) => {
       const title = task.title || task.taskId;
       const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
+      // 星名归属：跑马灯一行 = 谁在干 + 干什么；有链时链优先（用户拍板：关联的是链路）
+      const agentName = agentDisplayName(agentNameMap, task.agentId);
+      const hops = withChain ? chainHopsFor(task, chainIndex) : [];
+      const hasChain = hops.length >= 2;
+      const chainText = hops
+        .map((hop) => {
+          const done = hop.status === "succeeded";
+          const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
+          const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
+          return `${name}${done ? "✓" : failed ? "✕" : hop.status === "queued" ? "○" : "●"}`;
+        })
+        .join(" → ");
       return (
         <button
           key={`${task.gateway}:${task.taskId}`}
           type="button"
           className={`tasks-mini-row${tone === "failed" ? " tasks-mini-row--failed" : ""}`}
           onClick={expand}
-          title={`${title}${tone === "failed" ? "（失败）" : ""} · 点击展开`}
+          title={`${hasChain ? `${chainText} | ` : ""}${agentName ? `${agentName} · ` : ""}${title}${tone === "failed" ? "（失败）" : ""} · 点击展开`}
         >
           <i
             className={`tasks-mini-dot ${tone === "failed" ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
             aria-hidden="true"
           />
+          {hasChain ? (
+            <span className="task-chain task-chain--mini">
+              {hops.map((hop, index) => {
+                const done = hop.status === "succeeded";
+                const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
+                const pending = hop.status === "queued";
+                const toneClass = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
+                const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
+                return (
+                  <Fragment key={`${hop.gateway ?? ""}:${hop.taskId}`}>
+                    {index > 0 && <i className="task-chain-link" aria-hidden="true" />}
+                    <span className={`task-chain-hop task-chain-hop--${toneClass}`}>
+                      <span className="task-chain-agent">{name}</span>
+                      <span className="task-chain-glyph" aria-hidden="true">{done ? "✓" : failed ? "✕" : pending ? "○" : "●"}</span>
+                    </span>
+                  </Fragment>
+                );
+              })}
+            </span>
+          ) : (
+            agentName && <span className="tasks-mini-agent">{agentName}</span>
+          )}
           <span className="tasks-mini-title">{title}</span>
-          <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
+          {!withChain && (
+            <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
+          )}
         </button>
       );
     };
@@ -2116,8 +2152,10 @@ function TasksWidgetWindow({
             <>
               {miniRows.length > 0 ? (
                 <div className="tasks-mini-ticker">
-                  {renderMiniRow(miniRows[0])}
-                  {miniRows.length > 1 && <span className="tasks-mini-more">+{miniRows.length - 1}</span>}
+                  {renderMiniRow({ ...miniRows[0], withChain: true })}
+                  {miniRows.length > 1 && chainHopsFor(miniRows[0].task, chainIndex).length < 2 && (
+                    <span className="tasks-mini-more">+{miniRows.length - 1}</span>
+                  )}
                 </div>
               ) : (
                 <span className="tasks-mini-empty">{feed.live ? "暂无运行中任务" : "未同步"}</span>
