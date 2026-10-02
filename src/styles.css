@@ -6989,6 +6989,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 /* 链路胶卷：当前跳恒居中，链条两侧延伸；滚轮横滑；边缘渐隐 */
 .tasks-mini-strip {
+  position: relative; /* 当前跳居中依赖 offsetLeft，参照系必须是条自己 */
   display: flex;
   flex: 1;
   min-width: 0;
@@ -7085,28 +7086,14 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
    发丝短线连接。链从 runId 分组与 childSessionKey→sessionKey 父子边拼出
    （taskChains.js；字段语义在北斗网关实测过）。单跳不成链不渲染。 */
 .task-chain {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  /* 缩进到任务行标题起点 + 左侧肘形连接线：明确这条链属于上面那行运行中任务 */
-  position: relative;
-  margin: 2px 11px 3px 43px;
-  overflow: hidden;
-  font-size: 10.5px;
-  white-space: nowrap;
+  padding: 1px 11px 3px 15px;
+  /* 与任务行同一条发丝底线：链路是独立的一条带，不贴给上一行也不贴给下一行 */
+  box-shadow: 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.task-chain::before {
-  content: "";
-  position: absolute;
-  left: -15px;
-  top: -11px;
-  width: 14px;
-  height: 15px;
-  border-left: 1px solid rgba(31, 33, 36, 0.25);
-  border-bottom: 1px solid rgba(31, 33, 36, 0.25);
-  border-bottom-left-radius: 9px;
-  pointer-events: none;
+/* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮横移 */
+.task-chain .tasks-mini-strip {
+  cursor: default;
 }
 
 .task-chain-hop {
@@ -7173,9 +7160,6 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-chain {
   color: rgba(255, 255, 255, 0.8);
 }
-.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-chain::before {
-  border-color: rgba(255, 255, 255, 0.26);
-}
 /* 迷你条里的 strip-button 在深色 HUD 上（原覆盖只挂在 .strip-shell 下，够不到这） */
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini .strip-button {
   color: rgba(255, 255, 255, 0.62);
@@ -7197,6 +7181,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
     inset 0 1px rgba(255, 255, 255, 0.52);
 }
 .widget-shell--transparent.widget-shell--glass-light .widget-task-row {
+  box-shadow: 0 1px rgba(31, 33, 36, 0.06);
+}
+.widget-shell--transparent.widget-shell--glass-light .task-chain {
   box-shadow: 0 1px rgba(31, 33, 36, 0.06);
 }
 .widget-shell--transparent.widget-shell--glass-light .widget-task-accent {
@@ -7238,6 +7225,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .widget-task-row {
   box-shadow: 0 1px rgba(255, 255, 255, 0.06);
 }
+.widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .task-chain {
+  box-shadow: 0 1px rgba(255, 255, 255, 0.06);
+}
 
 /* 透明档（白墨）：发丝线换浅色一档 */
 .widget-shell--transparent.widget-shell--glass-ink-light .tasks-window-body {
@@ -7245,6 +7235,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 .widget-shell--transparent.widget-shell--glass-ink-light .widget-task-row {
+  box-shadow: 0 1px rgba(255, 255, 255, 0.12);
+}
+.widget-shell--transparent.widget-shell--glass-ink-light .task-chain {
   box-shadow: 0 1px rgba(255, 255, 255, 0.12);
 }
 .widget-shell--transparent.widget-shell--glass-ink-light .widget-task-accent {

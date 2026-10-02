@@ -5662,10 +5662,15 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
           .replace(/ /g, "")
           .replace(/0秒$/, "")
           .replace(/0分$/, "");
+        const state = done ? "已完成" : failed ? "失败" : pending ? "排队中" : "进行中";
         return (
           <Fragment key={`${hop.gateway ?? ""}:${hop.taskId}`}>
             {index > 0 && <i className="task-chain-link" aria-hidden="true" />}
-            <span ref={current ? currentRef : undefined} className={`task-chain-hop task-chain-hop--${tone}`}>
+            <span
+              ref={current ? currentRef : undefined}
+              className={`task-chain-hop task-chain-hop--${tone}`}
+              title={`${name} · ${state}${duration ? ` · ${duration}` : ""}`}
+            >
               <span className="task-chain-agent">{name}</span>
               <span className="task-chain-glyph" aria-hidden="true">{done ? "✓" : failed ? "✕" : pending ? "○" : "●"}</span>
               {duration && !vertical && <small>{duration}</small>}
@@ -5680,29 +5685,8 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
 function TaskChainStepper({ hops, currentTaskId, agentNameMap }) {
   if (!hops || hops.length < 2) return null;
   return (
-    <div className="task-chain" aria-label="任务链路">
-      {hops.map((hop, index) => {
-        const done = hop.status === "succeeded";
-        const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
-        const pending = hop.status === "queued";
-        const tone = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
-        const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
-        const duration = (formatTaskDuration(hop.startedAtMs, hop.endedAtMs) || "")
-          .replace(/ /g, "")
-          .replace(/0秒$/, "")
-          .replace(/0分$/, "");
-        const state = done ? "已完成" : failed ? "失败" : pending ? "排队中" : "进行中";
-        return (
-          <Fragment key={`${hop.gateway ?? ""}:${hop.taskId}`}>
-            {index > 0 && <i className="task-chain-link" aria-hidden="true" />}
-            <span className={`task-chain-hop task-chain-hop--${tone}`} title={`${name} · ${state}${duration ? ` · ${duration}` : ""}`}>
-              <span className="task-chain-agent">{name}</span>
-              <span className="task-chain-glyph" aria-hidden="true">{done ? "✓" : failed ? "✕" : pending ? "○" : "●"}</span>
-              {duration && <small>{duration}</small>}
-            </span>
-          </Fragment>
-        );
-      })}
+    <div className="task-chain">
+      <ChainFilmstrip hops={hops} currentTaskId={currentTaskId} agentNameMap={agentNameMap} />
     </div>
   );
 }
