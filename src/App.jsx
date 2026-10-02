@@ -33,7 +33,7 @@ import {
   PushPinSimple,
   ShieldCheck,
   Trash,
-  TreeStructure,
+  ListNumbers,
   X,
 } from "@phosphor-icons/react";
 import antigravityAppIcon from "./assets/antigravity-app-icon.png";
@@ -2328,7 +2328,7 @@ function TasksWidgetWindow({
             title={chainStyle === "timeline" ? "明细" : "速览"}
           >
             {chainStyle === "timeline" ? (
-              <TreeStructure size={16} weight="light" aria-hidden="true" />
+              <ListNumbers size={16} weight="light" aria-hidden="true" />
             ) : (
               <GitCommit size={16} weight="light" aria-hidden="true" />
             )}
