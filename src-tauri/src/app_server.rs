@@ -1,0 +1,560 @@
+use crate::child_process::{self, Site};
+use crate::domain::QuotaSample;
+use anyhow::{Context, Result};
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+/// 本机是否可能有已登录的 Codex。app-server 的登录态在 `CODEX_HOME`（默认
+/// `~/.codex`）里，这个目录都不存在时探测必然失败，不必为它周期性拉起进程。
+/// 显式指定了 `CODEX_BINARY` 的用户照常探测。
+pub fn codex_may_be_signed_in() -> bool {
+    if std::env::var_os("CODEX_BINARY").is_some() {
+        return true;
+    }
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))
+        .is_some_and(|home| home.is_dir())
+}
+
+pub fn read_codex_quota(timeout: Duration) -> Result<Vec<QuotaSample>> {
+    read_codex_quota_with_command(codex_app_server_command(), timeout)
+}
+
+fn read_codex_quota_with_command(command: Command, timeout: Duration) -> Result<Vec<QuotaSample>> {
+    Ok(parse_rate_limits(&read_usage_with_command(
+        command, timeout,
+    )?))
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCreditsView {
+    pub available_count: Option<i64>,
+    pub next_known_expiry_ms: Option<i64>,
+}
+
+pub fn read_reset_credits(timeout: Duration) -> Result<ResetCreditsView> {
+    let result = read_usage_with_command(codex_app_server_command(), timeout)?;
+    Ok(parse_reset_credits(&result, chrono::Utc::now().timestamp()))
+}
+
+fn parse_reset_credits(result: &Value, now_secs: i64) -> ResetCreditsView {
+    let summary = result.get("rateLimitResetCredits");
+    let available_count = summary
+        .and_then(|value| value.get("availableCount"))
+        .and_then(Value::as_i64)
+        .filter(|count| *count >= 0);
+    let next_known_expiry_ms = summary
+        .and_then(|value| value.get("credits"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|credit| credit.get("status").and_then(Value::as_str) == Some("available"))
+        .filter_map(|credit| credit.get("expiresAt").and_then(Value::as_i64))
+        .filter(|expiry| *expiry > now_secs)
+        .min()
+        .and_then(|expiry| expiry.checked_mul(1000))
+        .filter(|_| available_count.is_some_and(|count| count > 0));
+    ResetCreditsView {
+        available_count,
+        next_known_expiry_ms,
+    }
+}
+
+fn read_usage_with_command(mut command: Command, timeout: Duration) -> Result<Value> {
+    if std::env::var_os("METRIK_DEBUG").is_some() {
+        eprintln!("app-server command: {command:?}");
+    }
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+
+    // app-server 会派生后代（插件市场升级的 git 等），整棵树随探测结束一起收掉。
+    let mut child = child_process::spawn_tree(Site::CodexAppServer, &mut command)
+        .context("failed to start codex app-server")?;
+    let mut stdin = child
+        .child_mut()
+        .stdin
+        .take()
+        .context("codex app-server stdin unavailable")?;
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .context("codex app-server stdout unavailable")?;
+    let (sender, receiver) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    write_json(
+        &mut stdin,
+        &json!({
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "clientInfo": { "name": "metrik", "title": "Metrik", "version": "0.1.0" },
+                "capabilities": { "experimentalApi": true, "optOutNotificationMethods": [] }
+            }
+        }),
+    )?;
+
+    let deadline = Instant::now() + timeout;
+    let mut sent_request = false;
+    let mut result = None;
+
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let Ok(line) = receiver.recv_timeout(remaining.min(Duration::from_millis(250))) else {
+            continue;
+        };
+        if std::env::var_os("METRIK_DEBUG").is_some() {
+            eprintln!("app-server << {line}");
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let id = value.get("id").and_then(Value::as_i64);
+        if id == Some(1) && !sent_request {
+            write_json(&mut stdin, &json!({ "method": "initialized" }))?;
+            write_json(
+                &mut stdin,
+                &json!({ "id": 3, "method": "account/rateLimits/read" }),
+            )?;
+            sent_request = true;
+        } else if id == Some(3) {
+            result = value.get("result").cloned();
+            break;
+        }
+    }
+
+    // 先杀整棵进程树再关 stdin：app-server 读到 EOF 约 20ms 就自行退出，
+    // 作业对象不可用而回落到 taskkill /T 时，进程树断开会遗留它派生的子孙（如 git）。
+    child.terminate();
+    drop(stdin);
+
+    let result = result.context("codex app-server quota request timed out")?;
+    Ok(result)
+}
+
+/// 额度探测用不到插件。开着插件时 app-server 每次启动都会在后台升级插件市场
+/// （git ls-remote + clone 到 `.codex/.tmp/marketplaces/.staging`），短命进程退出后
+/// 克隆被遗留，Git 市场较大的用户磁盘每天涨数 GB（openai/codex#47735）。
+/// `-c` 是全局参数，必须放在子命令之前。
+const CODEX_PROBE_OVERRIDES: [&str; 2] = ["-c", "features.plugins=false"];
+
+fn codex_app_server_command() -> Command {
+    #[cfg(windows)]
+    {
+        let explicit = std::env::var_os("CODEX_BINARY").map(PathBuf::from);
+        let npm_script = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .map(|root| root.join("npm").join("codex.cmd"))
+            .filter(|path| path.exists());
+        let script = explicit
+            .or(npm_script)
+            .unwrap_or_else(|| PathBuf::from("codex"));
+        let mut command = Command::new("cmd.exe");
+        command
+            .args(["/D", "/C"])
+            .arg(script)
+            .args(CODEX_PROBE_OVERRIDES)
+            // stdio is the default transport across Codex CLI versions. Newer
+            // releases removed the old `--stdio` compatibility flag entirely.
+            .arg("app-server");
+        command
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new(resolve_unix_codex_binary());
+        command.args(CODEX_PROBE_OVERRIDES);
+        // Do not pass the removed `--stdio` flag; app-server defaults to stdio.
+        command.arg("app-server");
+        command
+    }
+}
+
+#[cfg(not(windows))]
+fn resolve_unix_codex_binary() -> PathBuf {
+    if let Some(explicit) = std::env::var_os("CODEX_BINARY") {
+        return PathBuf::from(explicit);
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        #[cfg(target_os = "macos")]
+        candidates.extend([
+            home.join("Applications/ChatGPT.app/Contents/Resources/codex"),
+            home.join("Applications/Codex.app/Contents/Resources/codex"),
+            PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
+            PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+        ]);
+
+        candidates.extend([
+            home.join(".local/bin/codex"),
+            home.join(".npm-global/bin/codex"),
+            home.join(".volta/bin/codex"),
+            home.join(".bun/bin/codex"),
+            home.join(".local/share/pnpm/codex"),
+            home.join("Library/pnpm/codex"),
+        ]);
+
+        let nvm_root = home.join(".nvm/versions/node");
+        if let Ok(entries) = std::fs::read_dir(nvm_root) {
+            let mut nvm_candidates: Vec<PathBuf> = entries
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path().join("bin/codex"))
+                .filter(|path| path.is_file())
+                .collect();
+            nvm_candidates.sort();
+            nvm_candidates.reverse();
+            candidates.extend(nvm_candidates);
+        }
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+        PathBuf::from("/usr/bin/codex"),
+    ]);
+
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("codex"))
+}
+
+fn write_json(stdin: &mut impl Write, value: &Value) -> Result<()> {
+    serde_json::to_writer(&mut *stdin, value)?;
+    stdin.write_all(b"\n")?;
+    stdin.flush()?;
+    Ok(())
+}
+
+fn parse_rate_limits(result: &Value) -> Vec<QuotaSample> {
+    let limits = result
+        // `rateLimits` is the account's canonical active usage window. The
+        // by-limit-id map also carries credit/spend-control records and can
+        // contain a Codex entry whose percentages do not match the account
+        // headline. CodexBar follows this same separation.
+        .get("rateLimits")
+        .filter(|value| !value.is_null())
+        .or_else(|| {
+            result
+                .get("rateLimitsByLimitId")
+                .or_else(|| result.get("rate_limits_by_limit_id"))
+                .and_then(|value| value.get("codex"))
+        });
+    let Some(limits) = limits else {
+        return Vec::new();
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    ["primary", "secondary"]
+        .into_iter()
+        .filter_map(|slot| {
+            let window = limits.get(slot)?;
+            let used = number(window.get("usedPercent")?)?;
+            let resets_at_ms = window
+                .get("resetsAt")
+                .and_then(integer)
+                .map(|value| value * 1000);
+            Some(QuotaSample {
+                adapter_id: "codex",
+                window_key: crate::domain::codex_window_key(
+                    window.get("windowDurationMins").and_then(integer),
+                    slot,
+                ),
+                remaining_percent: (100.0 - used).clamp(0.0, 100.0),
+                resets_at_ms,
+                collected_at_ms: now,
+                source_label: "Codex app-server".into(),
+                quality: "official_live",
+            })
+        })
+        .collect()
+}
+
+fn number(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|value| value as f64))
+}
+
+fn integer(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().map(|value| value as i64))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reset_credits_preserve_missing_count_and_ignore_unavailable_expiries() {
+        use serde_json::json;
+        assert_eq!(
+            super::parse_reset_credits(&json!({}), 100).available_count,
+            None
+        );
+        assert_eq!(
+            super::parse_reset_credits(&json!({"rateLimitResetCredits":{"availableCount":0}}), 100)
+                .available_count,
+            Some(0)
+        );
+        let value = json!({"rateLimitResetCredits":{"availableCount":5,"credits":[
+            {"status":"redeemed","expiresAt":150},
+            {"status":"available","expiresAt":90},
+            {"status":"available","expiresAt":300},
+            {"status":"available","expiresAt":200}
+        ]}});
+        let parsed = super::parse_reset_credits(&value, 100);
+        assert_eq!(parsed.available_count, Some(5));
+        assert_eq!(parsed.next_known_expiry_ms, Some(200_000));
+    }
+
+    use super::*;
+
+    #[test]
+    fn app_server_command_uses_the_cross_version_default_stdio_transport() {
+        let command = codex_app_server_command();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(arguments.iter().any(|argument| argument == "app-server"));
+        assert!(!arguments.iter().any(|argument| argument == "--stdio"));
+    }
+
+    #[test]
+    fn app_server_probe_disables_plugins_before_the_subcommand() {
+        let command = codex_app_server_command();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let subcommand = arguments
+            .iter()
+            .position(|argument| argument == "app-server")
+            .expect("app-server subcommand");
+        let flag = arguments
+            .windows(2)
+            .position(|pair| pair[0] == "-c" && pair[1] == "features.plugins=false")
+            .expect("plugins override");
+        assert!(flag < subcommand);
+    }
+
+    #[test]
+    fn parses_primary_and_secondary_windows() {
+        let value = json!({
+            "rateLimits": {
+                "primary": { "usedPercent": 26, "windowDurationMins": 300, "resetsAt": 1783831562 },
+                "secondary": { "usedPercent": 9, "windowDurationMins": 10080, "resetsAt": 1784371617 }
+            }
+        });
+        let samples = parse_rate_limits(&value);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].window_key, "primary");
+        assert_eq!(samples[0].remaining_percent, 74.0);
+        assert_eq!(samples[1].window_key, "secondary");
+        assert_eq!(samples[1].remaining_percent, 91.0);
+    }
+
+    #[test]
+    fn weekly_window_in_the_primary_slot_is_classified_by_duration() {
+        // prolite 套餐：primary 槽位装的是 10080 分钟（7 天）的周窗，且没有
+        // secondary。按槽位命名会把周额度标成"5 小时"，必须按时长归类。
+        let value = json!({
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": { "usedPercent": 25, "windowDurationMins": 10080, "resetsAt": 1784506589 },
+                    "secondary": null
+                }
+            }
+        });
+        let samples = parse_rate_limits(&value);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].window_key, "secondary");
+        assert_eq!(samples[0].remaining_percent, 75.0);
+    }
+
+    #[test]
+    fn canonical_account_windows_win_over_the_by_limit_credit_map() {
+        let value = json!({
+            "rateLimits": {
+                "primary": null,
+                "secondary": { "usedPercent": 11, "windowDurationMins": 10080, "resetsAt": 1784506589 }
+            },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": { "usedPercent": 16, "windowDurationMins": 10080, "resetsAt": 1784506589 },
+                    "secondary": null
+                }
+            }
+        });
+        let samples = parse_rate_limits(&value);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].window_key, "secondary");
+        assert_eq!(samples[0].remaining_percent, 89.0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_prefers_the_chatgpt_bundled_codex_before_package_manager_shims() {
+        let resolved = resolve_unix_codex_binary();
+        let bundled = PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex");
+        if bundled.is_file() && std::env::var_os("CODEX_BINARY").is_none() {
+            assert_eq!(resolved, bundled);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_child_terminates_windows_process_tree_after_descendant_is_ready() {
+        use std::os::windows::process::CommandExt;
+
+        let marker = std::env::temp_dir().join(format!(
+            "metrik-process-tree-{}-{}.txt",
+            std::process::id(),
+            chrono::Utc::now().timestamp_millis()
+        ));
+        let escaped_marker = marker.to_string_lossy().replace("'", "''");
+        let script = format!(
+            "$child = Start-Process -FilePath \"$env:SystemRoot\\System32\\PING.EXE\" \
+             -ArgumentList '-n','60','127.0.0.1' -WindowStyle Hidden -PassThru; \
+             $child.Id | Set-Content -LiteralPath '{escaped_marker}' -Encoding ascii; \
+             Wait-Process -Id $child.Id"
+        );
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
+        ]);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000);
+
+        let mut child = child_process::spawn_tree(Site::CodexAppServer, &mut command)
+            .expect("test PowerShell process should start");
+        let ready_deadline = Instant::now() + Duration::from_secs(10);
+        // 只等「文件存在」会撞上写入方还占着句柄（os error 32，"另一个程序正在
+        // 使用此文件"），或者读到 Set-Content 还没写完的空内容——两种都真实
+        // 发生过，全量并行跑约三成失败。直接等到「能读出一个 pid」为止。
+        let descendant_pid = loop {
+            if let Ok(Some(status)) = child.child_mut().try_wait() {
+                panic!("test PowerShell process exited before recording its descendant: {status}");
+            }
+            if let Some(pid) = std::fs::read_to_string(&marker)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u32>().ok())
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < ready_deadline,
+                "test child never recorded a readable descendant pid"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        child.terminate();
+
+        let filter = format!("PID eq {descendant_pid}");
+        let output = Command::new("tasklist.exe")
+            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+            .creation_flags(0x0800_0000)
+            .output()
+            .expect("tasklist should inspect the descendant");
+        let listing = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !listing.contains(&format!("\"{descendant_pid}\"")),
+            "timed-out app-server descendant {descendant_pid} is still running"
+        );
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn completed_quota_read_leaves_no_descendant_behind() {
+        use std::os::windows::process::CommandExt;
+
+        // 模拟 app-server：启动即派生一个子进程（对应插件市场升级的 git），
+        // 应答两条请求，读到 stdin EOF 立刻退出。
+        let marker = std::env::temp_dir().join(format!(
+            "metrik-probe-tree-{}-{}.txt",
+            std::process::id(),
+            chrono::Utc::now().timestamp_millis()
+        ));
+        let escaped_marker = marker.to_string_lossy().replace("'", "''");
+        let script = format!(
+            r#"$child = Start-Process -FilePath "$env:SystemRoot\System32\PING.EXE" -ArgumentList '-n','60','127.0.0.1' -WindowStyle Hidden -PassThru
+$child.Id | Set-Content -LiteralPath '{escaped_marker}' -Encoding ascii
+while ($null -ne ($line = [Console]::In.ReadLine())) {{
+  if ($line -match '"id":1,') {{ [Console]::Out.WriteLine('{{"id":1,"result":{{}}}}') }}
+  elseif ($line -match '"id":3,') {{ [Console]::Out.WriteLine('{{"id":3,"result":{{"rateLimits":{{}}}}}}') }}
+  [Console]::Out.Flush()
+}}"#
+        );
+        let mut command = Command::new("powershell.exe");
+        command
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(0x0800_0000);
+
+        // 超时只是兜底：CI 上全量并行时 PowerShell 冷启动加 Start-Process 实测超过 20s。
+        let result = read_usage_with_command(command, Duration::from_secs(90))
+            .expect("fake app-server should answer the quota request");
+        assert!(result.get("rateLimits").is_some());
+
+        let descendant_pid = std::fs::read_to_string(&marker)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .expect("fake app-server recorded its descendant before answering");
+        let filter = format!("PID eq {descendant_pid}");
+        let output = Command::new("tasklist.exe")
+            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+            .creation_flags(0x0800_0000)
+            .output()
+            .expect("tasklist should inspect the descendant");
+        let listing = String::from_utf8_lossy(&output.stdout);
+        let survived = listing.contains(&format!("\"{descendant_pid}\""));
+        if survived {
+            let _ = Command::new("taskkill.exe")
+                .args(["/PID", &descendant_pid.to_string(), "/F"])
+                .creation_flags(0x0800_0000)
+                .output();
+        }
+        let _ = std::fs::remove_file(marker);
+        assert!(
+            !survived,
+            "app-server descendant {descendant_pid} outlived the quota read"
+        );
+    }
+
+    #[test]
+    #[ignore = "starts the current user's Codex app-server"]
+    fn live_app_server_smoke_test() {
+        let samples = read_codex_quota(Duration::from_secs(8)).unwrap();
+        println!("live quota samples: {samples:?}");
+        assert!(!samples.is_empty());
+    }
+}

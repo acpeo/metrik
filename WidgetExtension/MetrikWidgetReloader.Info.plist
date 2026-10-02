@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- WidgetCenter 只刷新 containing app 所属的组件。这个 helper 随宿主 App
+         一起分发，因此必须呈现宿主 bundle 身份，不能使用链接器生成的随机 id。 -->
+    <key>CFBundleIdentifier</key>
+    <string>app.metrik.desktop</string>
+    <key>CFBundleName</key>
+    <string>metrik-widget-reload</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+</dict>
+</plist>

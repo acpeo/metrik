@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList.dtd">
+<plist version="1.0">
+<dict>
+    <!-- publisher 嵌入了 widget extension 的 bundle identity，所以沙盒进程的
+         UserDefaults.standard 解析进 widget 的 container，不依赖 App Group。
+         App Group 在 ad-hoc 签名（无 Team ID）下会被系统静默忽略，留着只会
+         误导排查。 -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+</dict>
+</plist>

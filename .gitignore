@@ -1,0 +1,49 @@
+node_modules/
+dist/
+.build/
+.npm-cache/
+src-tauri/target/
+src-tauri/gen/schemas/
+*.log
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+.DS_Store
+Thumbs.db
+.dispatch/
+.agents/
+.codex/
+.claude/
+.zcode/
+.maintainer/
+.learnings/
+.worktrees/
+.codex-release-*/
+.playwright-cli/
+output/
+
+# 本项目持久化的本机构建环境与安装产物；避免使用会在重启后清理的 /tmp。
+.local-env/
+.local-artifacts/
+
+# 本机配置与凭据
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# 本地数据库的常见扩展名
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+
+# 更新包签名私钥：丢失或泄露都会让更新链路失效，绝不入库
+*.key
+!src-tauri/**/*.key.pub

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 内嵌进 metrik-widget-publish 的 __info_plist section：沙盒化独立可执行
+         文件在 libsecinit 阶段要读 bundle 标识，裸二进制没有 Info.plist 会在
+         启动时直接 SIGTRAP（_libsecinit_appsandbox 崩溃，主函数都进不去）。 -->
+    <key>CFBundleIdentifier</key>
+    <!-- The publisher deliberately shares the Widget extension's sandbox identity so
+         both processes use the same standard container in ad-hoc local builds. -->
+    <string>app.metrik.desktop.widget</string>
+    <key>CFBundleName</key>
+    <string>metrik-widget-publish</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+</dict>
+</plist>
