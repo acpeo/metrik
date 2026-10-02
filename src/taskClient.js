@@ -95,6 +95,28 @@ function demoTasks() {
       firstSeenMs: now - 60_000,
       lastSeenMs: now - 60_000,
     },
+    {
+      taskId: "demo-7",
+      gateway: "本机",
+      runtime: "subagent",
+      status: "queued",
+      title: "风险核对·隆基绿能",
+      agentId: "tianquan",
+      runId: "demo-run-1",
+      firstSeenMs: now - 50_000,
+      lastSeenMs: now - 50_000,
+    },
+    {
+      taskId: "demo-8",
+      gateway: "VPS",
+      runtime: "subagent",
+      status: "queued",
+      title: "归档与摘要",
+      agentId: "yuheng",
+      runId: "demo-run-1",
+      firstSeenMs: now - 40_000,
+      lastSeenMs: now - 40_000,
+    },
   ];
 }
 

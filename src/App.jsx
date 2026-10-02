@@ -2066,28 +2066,13 @@ function TasksWidgetWindow({
             aria-hidden="true"
           />
           {hasChain ? (
-            <span className="task-chain task-chain--mini">
-              {hops.map((hop, index) => {
-                const done = hop.status === "succeeded";
-                const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
-                const pending = hop.status === "queued";
-                const toneClass = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
-                const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
-                return (
-                  <Fragment key={`${hop.gateway ?? ""}:${hop.taskId}`}>
-                    {index > 0 && <i className="task-chain-link" aria-hidden="true" />}
-                    <span className={`task-chain-hop task-chain-hop--${toneClass}`}>
-                      <span className="task-chain-agent">{name}</span>
-                      <span className="task-chain-glyph" aria-hidden="true">{done ? "✓" : failed ? "✕" : pending ? "○" : "●"}</span>
-                    </span>
-                  </Fragment>
-                );
-              })}
-            </span>
+            <ChainFilmstrip hops={hops} currentTaskId={task.taskId} agentNameMap={agentNameMap} />
           ) : (
-            agentName && <span className="tasks-mini-agent">{agentName}</span>
+            <>
+              {agentName && <span className="tasks-mini-agent">{agentName}</span>}
+              <span className="tasks-mini-title">{title}</span>
+            </>
           )}
-          <span className="tasks-mini-title">{title}</span>
           {!withChain && (
             <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
           )}
@@ -5597,6 +5582,54 @@ function TaskStatusPill({ status }) {
 /// 任务链路 stepper：链上每跳 = agent 名 + 状态符（✓ 完成 / ● 进行中 / ○ 待跑），
 /// 完成跳带耗时。单跳不成链不渲染——没有链路信息的行保持干净。
 /// 链从 runId 分组与 childSessionKey→sessionKey 父子边拼出（见 taskChains.js）。
+/// 跑马灯链路胶卷：当前执行 agent 恒定居中，链条两侧延伸出屏，
+/// 滚轮左右滑看前后跳（用户点名交互）。数据变化时重新居中，手动滚后尊重用户
+/// 位置直到下一次数据变化。边缘渐隐提示还有内容。
+function ChainFilmstrip({ hops, currentTaskId, agentNameMap }) {
+  const stripRef = useRef(null);
+  const currentRef = useRef(null);
+  const currentKey = `${currentTaskId ?? ""}:${hops.length}`;
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const current = currentRef.current;
+    if (!strip || !current) return;
+    strip.scrollLeft = current.offsetLeft + current.offsetWidth / 2 - strip.clientWidth / 2;
+  }, [currentKey]);
+  return (
+    <span
+      className="tasks-mini-strip"
+      ref={stripRef}
+      onWheel={(event) => {
+        const target = event.currentTarget;
+        target.scrollLeft += event.deltaY + event.deltaX;
+      }}
+    >
+      {hops.map((hop, index) => {
+        const done = hop.status === "succeeded";
+        const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
+        const pending = hop.status === "queued";
+        const current = hop.taskId === currentTaskId && !done && !failed;
+        const tone = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
+        const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
+        const duration = (formatTaskDuration(hop.startedAtMs, hop.endedAtMs) || "")
+          .replace(/ /g, "")
+          .replace(/0秒$/, "")
+          .replace(/0分$/, "");
+        return (
+          <Fragment key={`${hop.gateway ?? ""}:${hop.taskId}`}>
+            {index > 0 && <i className="task-chain-link" aria-hidden="true" />}
+            <span ref={current ? currentRef : undefined} className={`task-chain-hop task-chain-hop--${tone}`}>
+              <span className="task-chain-agent">{name}</span>
+              <span className="task-chain-glyph" aria-hidden="true">{done ? "✓" : failed ? "✕" : pending ? "○" : "●"}</span>
+              {duration && <small>{duration}</small>}
+            </span>
+          </Fragment>
+        );
+      })}
+    </span>
+  );
+}
+
 function TaskChainStepper({ hops, currentTaskId, agentNameMap }) {
   if (!hops || hops.length < 2) return null;
   return (
