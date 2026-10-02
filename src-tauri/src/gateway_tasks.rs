@@ -664,29 +664,17 @@ pub fn fetch_agents_snapshot(target: &GatewayTarget) -> Result<AgentsSnapshot> {
                     .get("modelProvider")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
-                input_tokens: session
-                    .get("inputTokens")
-                    .and_then(Value::as_i64),
-                output_tokens: session
-                    .get("outputTokens")
-                    .and_then(Value::as_i64),
-                total_tokens: session
-                    .get("totalTokens")
-                    .and_then(Value::as_i64),
-                context_tokens: session
-                    .get("contextTokens")
-                    .and_then(Value::as_i64),
+                input_tokens: session.get("inputTokens").and_then(Value::as_i64),
+                output_tokens: session.get("outputTokens").and_then(Value::as_i64),
+                total_tokens: session.get("totalTokens").and_then(Value::as_i64),
+                context_tokens: session.get("contextTokens").and_then(Value::as_i64),
                 estimated_prompt_tokens: budget
                     .and_then(|b| b.get("estimatedPromptTokens"))
                     .and_then(Value::as_i64),
                 context_token_budget: budget
                     .and_then(|b| b.get("contextTokenBudget"))
                     .and_then(Value::as_i64)
-                    .or_else(|| {
-                        session
-                            .get("contextTokens")
-                            .and_then(Value::as_i64)
-                    }),
+                    .or_else(|| session.get("contextTokens").and_then(Value::as_i64)),
                 prompt_message_count: budget
                     .and_then(|b| b.get("messageCount"))
                     .and_then(Value::as_i64),
