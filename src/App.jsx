@@ -2017,7 +2017,7 @@ function TasksWidgetWindow({
   // 与原小组件"行集合格子不藏"同一哲学：窗口高度不跳）。
   const miniSize = (vertical, controlsOpenState) =>
     vertical
-      ? { width: controlsOpenState ? 152 : 42, height: 180 }
+      ? { width: 42, height: controlsOpenState ? 304 : 180 }
       : { width: controlsOpenState ? 328 : 244, height: 36 };
   // 尺寸变化统一走这一个副作用（折叠/开合/切向/行数），处理器只改状态。
   useLayoutEffect(() => {

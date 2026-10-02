@@ -6832,7 +6832,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .tasks-mini--vertical .tasks-mini-controls {
+  flex-direction: column;
   justify-content: center;
+  gap: 4px;
   margin-top: 4px;
 }
 
