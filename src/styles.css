@@ -6743,6 +6743,47 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 /* 横条跑马灯：单行任务 + "+N" 提示 */
 .tasks-mini:not(.tasks-mini--vertical) { flex-direction: row; align-items: center; padding: 3px 4px 3px 6px; }
 
+/* 竖条计数格：状态点 + 数字 + 小标签（原竖条 icon 上/数字下堆叠的平移），
+   固定 44px 格高，窗口高度不随数据伸缩（原项目"行集合格子不藏"同一哲学） */
+.tasks-mini--vertical .tasks-mini-cell {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 4px 2px;
+  color: inherit;
+  font: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background-color 240ms var(--motion);
+}
+
+.tasks-mini--vertical .tasks-mini-cell:hover { background: rgba(255, 255, 255, 0.07); }
+.widget-shell--glass-light .tasks-mini--vertical .tasks-mini-cell:hover { background: rgba(31, 33, 36, 0.06); }
+
+.tasks-mini--vertical .tasks-mini-cell em {
+  color: inherit;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.tasks-mini--vertical .tasks-mini-cell small {
+  font-size: 9px;
+  line-height: 1.2;
+  opacity: 0.5;
+}
+
+.tasks-mini--vertical .tasks-mini-cell--zero em { opacity: 0.4; }
+.tasks-mini--vertical .tasks-mini-cell--zero .tasks-mini-dot { opacity: 0.35; }
+
 .tasks-mini-ticker {
   display: flex;
   flex: 1;
@@ -6777,7 +6818,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .tasks-mini-dot--failed { background: #ec7a63; }
 
-/* 控制槽：与行列表间一条发丝线（strip-controls 同款）；横条时改竖线 */
+/* 控制槽：与内容间一条发丝线（strip-controls 同款）；竖条时也是横排
+   （展开=条身加宽，按钮内联一行，不再纵向堆塔裁切） */
 .tasks-mini-controls {
   display: flex;
   flex: none;
@@ -6789,6 +6831,11 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   box-shadow: 0 -1px color-mix(in srgb, currentColor 9%, transparent);
 }
 
+.tasks-mini--vertical .tasks-mini-controls {
+  justify-content: center;
+  margin-top: 4px;
+}
+
 .tasks-mini:not(.tasks-mini--vertical) .tasks-mini-controls {
   margin-top: 0;
   margin-left: 1px;
@@ -6797,13 +6844,21 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   box-shadow: -1px 0 color-mix(in srgb, currentColor 9%, transparent);
 }
 
-/* 控制槽里的同步状态灯：压成 6px 并去掉基线的上边距 */
+/* 状态灯与 ••• 同槽（原 strip-control-slot--menu 模式）：
+   默认见灯，悬停或展开时灯让位、••• 现身 */
 .tasks-mini-controls .status-dot {
   width: 6px;
   height: 6px;
-  margin: 0 3px 0 6px;
+  margin: 0;
   flex: none;
 }
+
+.tasks-mini:hover .strip-control-slot--menu .status-dot,
+.tasks-mini-controls--open .strip-control-slot--menu .status-dot { visibility: hidden; }
+
+.tasks-mini .strip-button--menu { opacity: 0; }
+.tasks-mini:hover .strip-button--menu,
+.tasks-mini-controls--open .strip-button--menu { opacity: 1; }
 
 /* ── 任务小组件三档外观（跟随原项目的深色/浅色/透明档）────────────── */
 

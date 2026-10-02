@@ -1957,11 +1957,11 @@ function TasksWidgetWindow({
   const [collapsed, setCollapsed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [miniControlsOpen, setMiniControlsOpen] = useState(false);
-  const [miniOrientation, setMiniOrientation] = useState("vertical");
+  const [miniOrientation, setMiniOrientation] = useState("horizontal");
   const miniShellRef = useRef(null);
   const miniLeaveTimerRef = useRef(null);
   // 延时关闭回调里读的是注册时刻的闭包，方向要经 ref 取最新值。
-  const miniOrientationRef = useRef("vertical");
+  const miniOrientationRef = useRef("horizontal");
   miniOrientationRef.current = miniOrientation;
   const tasks = feed.tasks?.tasks || [];
   const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
@@ -2013,21 +2013,19 @@ function TasksWidgetWindow({
     }
     return rows;
   })();
-  // 窗口尺寸随行数与控制开合：行 28px + 缝 2px，控制槽 26px。
-  const miniSize = (vertical, controlsOpenState, rowCount) =>
+  // 窗口尺寸：横条=跑马灯 244×36；竖条=计数格三格固定（44px/格，不随数据伸缩，
+  // 与原小组件"行集合格子不藏"同一哲学：窗口高度不跳）。
+  const miniSize = (vertical, controlsOpenState) =>
     vertical
-      ? {
-          width: 232,
-          height: controlsOpenState ? Math.max(150, 130 + rowCount * 30) : Math.max(46, 40 + rowCount * 30),
-        }
-      : { width: controlsOpenState ? 324 : 244, height: 36 };
+      ? { width: controlsOpenState ? 152 : 42, height: 180 }
+      : { width: controlsOpenState ? 328 : 244, height: 36 };
   // 尺寸变化统一走这一个副作用（折叠/开合/切向/行数），处理器只改状态。
   useLayoutEffect(() => {
     if (!collapsed) return;
-    const dims = miniSize(miniOrientation === "vertical", miniControlsOpen, miniRows.length);
+    const dims = miniSize(miniOrientation === "vertical", miniControlsOpen);
     runWindowAction(() => resizeCurrentWindow(dims.width, dims.height));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collapsed, miniControlsOpen, miniOrientation, miniRows.length]);
+  }, [collapsed, miniControlsOpen, miniOrientation]);
   if (collapsed) {
     const miniVertical = miniOrientation === "vertical";
     const MiniOrientationIcon = miniVertical ? ArrowsLeftRight : ArrowsDownUp;
@@ -2056,7 +2054,7 @@ function TasksWidgetWindow({
         </button>
       );
     };
-    const miniDimensions = miniSize(miniVertical, miniControlsOpen, miniRows.length);
+    const miniDimensions = miniSize(miniVertical, miniControlsOpen);
     return (
       <main
         ref={miniShellRef}
@@ -2083,14 +2081,32 @@ function TasksWidgetWindow({
           }}
         >
           {miniVertical ? (
-            <>
-              {miniRows.map(renderMiniRow)}
-              {miniRows.length === 0 && (
-                <span className="tasks-mini-empty" title={feed.live ? "暂无运行中任务" : "Gateway 未同步"}>
-                  {feed.live ? "暂无运行中任务" : "未同步"}
-                </span>
-              )}
-            </>
+            (() => {
+              // 计数格：状态点 + 数字 + 小标签（原竖条 icon/数字/堆叠的平移）。
+              // 失败/完成 = 近 24 小时口径（见 recentlyEnded）。
+              const failedCount = recentlyEnded.filter(
+                (task) => task.status === "failed" || task.status === "timed_out" || task.status === "lost",
+              ).length;
+              const doneCount = recentlyEnded.filter((task) => task.status === "succeeded").length;
+              const countCells = [
+                { key: "running", dotCls: feed.live ? "tasks-mini-dot--on" : "", count: active.length, label: "运行" },
+                { key: "failed", dotCls: "tasks-mini-dot--failed", count: failedCount, label: "失败" },
+                { key: "done", dotCls: "tasks-mini-dot--done", count: doneCount, label: "完成" },
+              ];
+              return countCells.map((cell) => (
+                <button
+                  key={cell.key}
+                  type="button"
+                  className={`tasks-mini-cell${cell.count ? "" : " tasks-mini-cell--zero"}`}
+                  onClick={expand}
+                  title={`${cell.label} ${cell.count} · 点击展开`}
+                >
+                  <i className={`tasks-mini-dot ${cell.dotCls}`} aria-hidden="true" />
+                  <em>{cell.count}</em>
+                  <small>{cell.label}</small>
+                </button>
+              ));
+            })()
           ) : (
             // 横条 = 跑马灯：只显示第一个任务，多了用 +N 提示
             <>
@@ -2104,21 +2120,23 @@ function TasksWidgetWindow({
               )}
             </>
           )}
-          <div className="tasks-mini-controls">
-            <i
-              className={`status-dot ${feed.live ? "" : "status-dot--error"}`}
-              title={feed.live ? "实时同步中" : "未同步"}
-              aria-hidden="true"
-            />
-            <button
-              type="button"
-              className={`strip-button ${miniControlsOpen ? "strip-button--active" : ""}`}
-              onClick={() => setMiniControlsOpen(!miniControlsOpen)}
-              aria-expanded={miniControlsOpen}
-              title={miniControlsOpen ? "收起控制按钮" : "展开控制按钮"}
-            >
-              <DotsThree size={16} weight="regular" aria-hidden="true" />
-            </button>
+          <div className={`tasks-mini-controls${miniControlsOpen ? " tasks-mini-controls--open" : ""}`}>
+            <span className="strip-control-slot strip-control-slot--menu" title={feed.live ? "实时同步中" : "未同步"}>
+              <i
+                className={`status-dot ${feed.live ? "" : "status-dot--error"}`}
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                className={`strip-button strip-button--menu ${miniControlsOpen ? "strip-button--active" : ""}`}
+                onClick={() => setMiniControlsOpen(!miniControlsOpen)}
+                aria-expanded={miniControlsOpen}
+                aria-label={miniControlsOpen ? "收起控制按钮" : "展开控制按钮"}
+                title={miniControlsOpen ? "收起控制按钮" : "展开控制按钮"}
+              >
+                <DotsThree size={16} weight="regular" aria-hidden="true" />
+              </button>
+            </span>
             {miniControlsOpen && (
               <>
                 <button
