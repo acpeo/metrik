@@ -1856,6 +1856,14 @@ function useWidgetTasksFeed(gateways, enabled) {
   return { tasks, agents, live, lastSync };
 }
 
+/// 任务行首的状态色竖条：与 Agent 行的彩色边条同一语言（绿=跑，红=败，灰=终态）。
+function taskAccentClass(status) {
+  if (status === "running") return "widget-task-accent--running";
+  if (status === "queued") return "widget-task-accent--queued";
+  if (status === "failed" || status === "timed_out" || status === "lost") return "widget-task-accent--failed";
+  return "widget-task-accent--ended";
+}
+
 /// 桌面小组件的"任务追踪"卡片：实时指示 + 运行中任务 + 活跃 Agent。
 /// 常驻在用量行下方；点击头部直达完整任务页。
 function WidgetTasksCard({ feed, onOpenTasks }) {
@@ -1867,7 +1875,7 @@ function WidgetTasksCard({ feed, onOpenTasks }) {
   const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
   return (
     <section className="widget-tasks" aria-label="Gateway 任务追踪">
-      <button type="button" className="widget-tasks-head" onClick={onOpenTasks} title="打开完整任务页">
+      <button type="button" className="widget-tasks-head" onClick={onOpenTasks} title="打开任务小组件">
         <span className={feed.live ? "live-indicator live-indicator--on" : "live-indicator"}>
           <span className="live-dot" />
           {feed.live ? "实时" : "未同步"}
@@ -1881,10 +1889,13 @@ function WidgetTasksCard({ feed, onOpenTasks }) {
         const stale = now - lastSeen > staleMs;
         return (
           <div className="widget-task-row" key={`${task.gateway}:${task.taskId}`}>
-            <TaskStatusPill status={task.status} />
-            {stale && <span className="task-pill task-pill--stale">卡?</span>}
-            <span className="widget-task-title" title={task.title || task.taskId}>
-              {task.title || task.taskId}
+            <i className={`widget-task-accent ${taskAccentClass(task.status)}`} aria-hidden="true" />
+            <span className="widget-task-main">
+              <TaskStatusPill status={task.status} />
+              {stale && <span className="task-pill task-pill--stale">卡?</span>}
+              <span className="widget-task-title" title={task.title || task.taskId}>
+                {task.title || task.taskId}
+              </span>
             </span>
             <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
           </div>
@@ -1956,10 +1967,13 @@ function TasksWidgetWindow({
         className={`widget-task-row${dimmed ? " widget-task-row--ended" : ""}`}
         key={`${task.gateway}:${task.taskId}`}
       >
-        <TaskStatusPill status={task.status} />
-        {stale && <span className="task-pill task-pill--stale">卡?</span>}
-        <span className="widget-task-title" title={task.title || task.taskId}>
-          {task.title || task.taskId}
+        <i className={`widget-task-accent ${taskAccentClass(task.status)}`} aria-hidden="true" />
+        <span className="widget-task-main">
+          <TaskStatusPill status={task.status} />
+          {stale && <span className="task-pill task-pill--stale">卡?</span>}
+          <span className="widget-task-title" title={task.title || task.taskId}>
+            {task.title || task.taskId}
+          </span>
         </span>
         <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
       </div>

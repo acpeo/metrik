@@ -6419,12 +6419,37 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .widget-task-row {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 7px;
+  padding: 7px 8px 7px 0;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.widget-task-row:last-of-type {
+  box-shadow: none;
+}
+
+.widget-task-accent {
+  width: 4px;
+  height: 20px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.24);
+  justify-self: start;
+}
+
+.widget-task-accent--running { background: #199e70; }
+.widget-task-accent--queued { background: #7fabef; }
+.widget-task-accent--failed { background: #ec8468; }
+
+.widget-task-main {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 0 0;
-  font-size: 11.5px;
-  line-height: 1.35;
+  gap: 6px;
+  min-width: 0;
 }
 
 .widget-task-title {
@@ -6433,12 +6458,13 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 .widget-task-row small {
   flex: none;
-  font-size: 10.5px;
-  opacity: 0.6;
+  font-size: 11px;
+  opacity: 0.58;
   font-variant-numeric: tabular-nums;
 }
 
@@ -6459,11 +6485,12 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1.5px 8px;
+  padding: 2px 9px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: rgba(255, 255, 255, 0.05);
   font-size: 10.5px;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .widget-agent-chip .agent-status-dot {
@@ -6491,8 +6518,14 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   min-height: 0;
   overflow-y: auto;
   border-top: none;
-  padding: 4px 2px;
+  padding: 5px 4px;
   scrollbar-width: thin;
+  /* 与 Agent 行列表同一张卡面（深色 HUD 的白 0.06 + 白描边） */
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.09),
+    inset 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .widget-task-row--ended {
