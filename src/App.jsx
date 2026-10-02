@@ -2022,7 +2022,7 @@ function TasksWidgetWindow({
   const miniSize = (vertical, controlsOpenState) =>
     vertical
       ? { width: 42, height: controlsOpenState ? 304 : 180 }
-      : { width: controlsOpenState ? 384 : 300, height: 36 };
+      : { width: controlsOpenState ? 324 : 240, height: 36 };
   // 尺寸变化统一走这一个副作用（折叠/开合/切向/行数），处理器只改状态。
   useLayoutEffect(() => {
     if (!collapsed) return;

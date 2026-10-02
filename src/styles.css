@@ -6890,7 +6890,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   min-width: 0;
   align-items: center;
   gap: 3px;
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -6903,7 +6904,19 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .tasks-mini-strip .task-chain-hop {
   flex: none;
+  align-items: center;
   gap: 1px;
+  line-height: 1;
+}
+
+.tasks-mini-strip .task-chain-agent,
+.tasks-mini-strip .task-chain-glyph,
+.tasks-mini-strip .task-chain-hop small {
+  line-height: 1;
+}
+
+.tasks-mini-strip .task-chain-link {
+  align-self: center;
 }
 
 .tasks-mini-strip .task-chain-hop--current .task-chain-agent {
