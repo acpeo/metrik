@@ -6674,39 +6674,84 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   color: #6fc49a;
 }
 
-/* ── 任务小组件 · 迷你胶囊形态（折叠态）──────────────────────────── */
+/* ── 任务小组件 · 折叠形态（原项目胶囊条同款交互）──────────────────
+   默认横条 = 点+数字格横排（strip-cell 的 icon→dot 平移）+ 发丝分隔 +
+   ••• 控制槽；••• 就地展开置顶/切竖条/展开；竖条是切出来的另一形态。 */
 
 .tasks-mini {
-  width: calc(100% - 8px);
-  height: calc(100% - 8px);
-  margin: 4px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 1px;
-  border: none;
-  background: transparent;
+  width: 100%;
+  height: 100%;
+  padding: 0 5px 0 6px;
+  cursor: default;
+  user-select: none;
+}
+
+.tasks-mini--vertical {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 6px 3px 4px;
+  gap: 4px;
+}
+
+.tasks-mini-cell {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 4px 6px;
   color: inherit;
   font: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
   cursor: pointer;
-  border-radius: 8px;
+  transition: background-color 240ms var(--motion);
 }
 
-.tasks-mini strong {
-  font-size: 19px;
+/* 横条格间发丝分隔（strip-cell 同款） */
+.tasks-mini:not(.tasks-mini--vertical) .tasks-mini-cell + .tasks-mini-cell::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: -2px;
+  width: 1px;
+  background: currentColor;
+  opacity: 0.09;
+  pointer-events: none;
+}
+
+.tasks-mini-cell:hover { background: rgba(255, 255, 255, 0.07); }
+.widget-shell--glass-light .tasks-mini-cell:hover { background: rgba(31, 33, 36, 0.06); }
+
+.tasks-mini-cell em {
+  color: inherit;
+  font-style: normal;
+  font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 
-.tasks-mini small {
-  font-size: 10px;
-  opacity: 0.62;
+/* 零值格弱化（对齐 strip-cell--unavailable，不伪造数字） */
+.tasks-mini-cell--zero em { opacity: 0.4; }
+.tasks-mini-cell--zero .tasks-mini-dot { opacity: 0.35; }
+
+/* 竖条：格子立起来，点上数字下 */
+.tasks-mini--vertical .tasks-mini-cell {
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 5px 2px;
 }
 
 .tasks-mini-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: color-mix(in srgb, currentColor 38%, transparent);
 }
@@ -6714,6 +6759,28 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .tasks-mini-dot--on {
   background: #6fc49a;
   animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+.tasks-mini-dot--failed { background: #ec7a63; }
+.tasks-mini-dot--done { background: rgba(255, 255, 255, 0.35); }
+.widget-shell--glass-light .tasks-mini-dot--done { background: rgba(31, 33, 36, 0.3); }
+
+/* 控制槽：与格子间一条发丝竖线（strip-controls 同款）；竖条时改横线 */
+.tasks-mini-controls {
+  display: flex;
+  align-items: center;
+  margin-left: 1px;
+  padding-left: 3px;
+  box-shadow: -1px 0 color-mix(in srgb, currentColor 9%, transparent);
+}
+
+.tasks-mini--vertical .tasks-mini-controls {
+  flex-direction: column;
+  margin-left: 0;
+  margin-top: 1px;
+  padding-left: 0;
+  padding-top: 3px;
+  box-shadow: 0 -1px color-mix(in srgb, currentColor 9%, transparent);
 }
 
 /* ── 任务小组件三档外观（跟随原项目的深色/浅色/透明档）────────────── */

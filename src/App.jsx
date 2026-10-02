@@ -1956,13 +1956,26 @@ function TasksWidgetWindow({
   const [pinned, setPinned] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [miniControlsOpen, setMiniControlsOpen] = useState(false);
+  const [miniOrientation, setMiniOrientation] = useState("vertical");
+  const miniShellRef = useRef(null);
+  const miniLeaveTimerRef = useRef(null);
+  // 延时关闭回调里读的是注册时刻的闭包，方向要经 ref 取最新值。
+  const miniOrientationRef = useRef("vertical");
+  miniOrientationRef.current = miniOrientation;
   const tasks = feed.tasks?.tasks || [];
   const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
-  const recent = tasks
-    .filter((task) => task.status !== "running" && task.status !== "queued")
-    .slice(0, 6);
-  const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
   const now = Date.now();
+  // 失败/完成的口径 = 近 24 小时内结束的任务（账本保留 7 天，不设窗口的话
+  // 数字只涨不清，就成了历史累计而不是"当前这批工作"的状态）。
+  const recentWindowMs = 24 * 60 * 60 * 1000;
+  const taskEndedAt = (task) =>
+    Number.isFinite(task.endedAtMs) ? task.endedAtMs : Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
+  const recentlyEnded = tasks.filter(
+    (task) => task.status !== "running" && task.status !== "queued" && now - taskEndedAt(task) < recentWindowMs,
+  );
+  const recent = recentlyEnded.slice(0, 6);
+  const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
   const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
   const shellAppearance = glassShellAppearance("widget", {
     transparent,
@@ -1973,22 +1986,157 @@ function TasksWidgetWindow({
     isMac: IS_MAC,
     loading: false,
   });
+  // 折叠态窗口尺寸：原胶囊条两形态 × 控制按钮开合，四类定值
+  // （格子 flex:none 不拉伸，窗口跟着形态走，不留伸展空白）。
+  const miniSize = (vertical, controlsOpenState) =>
+    vertical
+      ? { width: 42, height: controlsOpenState ? 252 : 144 }
+      : { width: controlsOpenState ? 260 : 156, height: 36 };
+  // 窗口随控制开合变尺寸时 WebView 会发瞬态 pointerleave（原竖条踩过同一坑，
+  // 用"延时 + :hover 复核"跨过原生事务）：延时收控制，指针真离开才收。
+  const closeMiniControlsAfterLeave = () => {
+    window.clearTimeout(miniLeaveTimerRef.current);
+    miniLeaveTimerRef.current = window.setTimeout(() => {
+      miniLeaveTimerRef.current = null;
+      if (miniShellRef.current?.matches(":hover")) return;
+      setMiniControlsOpen(false);
+      const closed = miniSize(miniOrientationRef.current === "vertical", false);
+      runWindowAction(() => resizeCurrentWindow(closed.width, closed.height));
+    }, 260);
+  };
   if (collapsed) {
+    // 折叠态 = 原项目胶囊条同款交互：默认竖条（用户指定），••• 里可切横条；
+    // ••• 就地展开控制按钮（置顶 / 切换方向 / 展开小组件 / 完整视图）。
+    // 失败/完成 = 近 24 小时（与展开卡"近期完成"同一口径，见 recentlyEnded）。
+    const failedCount = recentlyEnded.filter(
+      (task) => task.status === "failed" || task.status === "timed_out" || task.status === "lost",
+    ).length;
+    const doneCount = recentlyEnded.filter((task) => task.status === "succeeded").length;
+    const miniVertical = miniOrientation === "vertical";
+    const MiniOrientationIcon = miniVertical ? ArrowsLeftRight : ArrowsDownUp;
+    const expand = () => {
+      setCollapsed(false);
+      setMiniControlsOpen(false);
+      runWindowAction(() => resizeCurrentWindow(320, 384));
+    };
+    const cells = [
+      { key: "running", count: active.length, label: `运行中 ${active.length}` },
+      { key: "failed", count: failedCount, label: `失败 ${failedCount}` },
+      { key: "done", count: doneCount, label: `近期完成 ${doneCount}` },
+    ];
+    const miniDimensions = miniSize(miniVertical, miniControlsOpen);
     return (
-      <main className={shellAppearance.className}>
-        <button
-          type="button"
-          className="tasks-mini"
-          onClick={() => {
-            setCollapsed(false);
-            runWindowAction(() => resizeCurrentWindow(320, 384));
+      <main
+        ref={miniShellRef}
+        className={shellAppearance.className}
+        style={{
+          ...shellAppearance.style,
+          width: `${miniDimensions.width}px`,
+          height: `${miniDimensions.height}px`,
+          // 折叠壳不受 .widget-shell 的 320×260 下限约束（那是完整卡片的下限）
+          minWidth: 0,
+          minHeight: 0,
+        }}
+        onPointerEnter={() => {
+          window.clearTimeout(miniLeaveTimerRef.current);
+          miniLeaveTimerRef.current = null;
+        }}
+        onPointerLeave={closeMiniControlsAfterLeave}
+      >
+        <div
+          className={`tasks-mini${miniVertical ? " tasks-mini--vertical" : ""}`}
+          onPointerDown={(event) => {
+            if (event.button !== 0 || event.target.closest("button")) return;
+            startWindowDragging();
           }}
-          title="展开任务追踪"
         >
-          <span className={`tasks-mini-dot ${feed.live ? "tasks-mini-dot--on" : ""}`} aria-hidden="true" />
-          <strong>{active.length}</strong>
-          <small>任务</small>
-        </button>
+          {cells.map((cell) => (
+            <button
+              key={cell.key}
+              type="button"
+              className={`tasks-mini-cell${cell.count ? "" : " tasks-mini-cell--zero"}`}
+              onClick={expand}
+              title={`${cell.label} · 点击展开`}
+            >
+              <i
+                className={`tasks-mini-dot ${
+                  cell.key === "running" && feed.live
+                    ? "tasks-mini-dot--on"
+                    : cell.key === "failed"
+                      ? "tasks-mini-dot--failed"
+                      : "tasks-mini-dot--done"
+                }`}
+                aria-hidden="true"
+              />
+              <em>{cell.count}</em>
+            </button>
+          ))}
+          <div className="tasks-mini-controls">
+            <button
+              type="button"
+              className={`strip-button ${miniControlsOpen ? "strip-button--active" : ""}`}
+              onClick={() => {
+                const next = !miniControlsOpen;
+                setMiniControlsOpen(next);
+                const target = miniSize(miniVertical, next);
+                runWindowAction(() => resizeCurrentWindow(target.width, target.height));
+              }}
+              aria-expanded={miniControlsOpen}
+              title={miniControlsOpen ? "收起控制按钮" : "展开控制按钮"}
+            >
+              <DotsThree size={16} weight="regular" aria-hidden="true" />
+            </button>
+            {miniControlsOpen && (
+              <>
+                <button
+                  type="button"
+                  className={`strip-button ${pinned ? "strip-button--active" : ""}`}
+                  onClick={() => {
+                    const next = !pinned;
+                    setPinned(next);
+                    runWindowAction(() => setWindowPinned(next));
+                  }}
+                  aria-pressed={pinned}
+                  title={pinned ? "取消固定，恢复拖动" : "固定在当前位置并置顶"}
+                >
+                  <PushPinSimple size={15} weight={pinned ? "fill" : "light"} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="strip-button"
+                  onClick={() => {
+                    const nextVertical = !miniVertical;
+                    setMiniOrientation(nextVertical ? "vertical" : "horizontal");
+                    const target = miniSize(nextVertical, miniControlsOpen);
+                    runWindowAction(() => resizeCurrentWindow(target.width, target.height));
+                  }}
+                  aria-label={miniVertical ? "切换为横条" : "切换为竖条"}
+                  title={miniVertical ? "切换为横条" : "切换为竖条"}
+                >
+                  <MiniOrientationIcon size={15} weight="light" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="strip-button"
+                  onClick={expand}
+                  aria-label="展开任务追踪"
+                  title="展开任务追踪"
+                >
+                  <ArrowsOutSimple size={15} weight="light" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="strip-button"
+                  onClick={onOpenExpanded}
+                  aria-label="打开完整视图"
+                  title="完整视图"
+                >
+                  <CornersOut size={15} weight="light" aria-hidden="true" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       </main>
     );
   }
@@ -2049,7 +2197,8 @@ function TasksWidgetWindow({
             className="window-action"
             onClick={() => {
               setCollapsed(true);
-              runWindowAction(() => resizeCurrentWindow(64, 64));
+              const target = miniSize(miniOrientation === "vertical", false);
+              runWindowAction(() => resizeCurrentWindow(target.width, target.height));
             }}
             aria-label="折叠为迷你胶囊"
             title="折叠为迷你胶囊"
