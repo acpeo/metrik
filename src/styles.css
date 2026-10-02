@@ -7026,9 +7026,16 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  /* 按住拖拽滚动：横条只吃横向手势（纵向留给页面滚），文本不选中 */
+  touch-action: pan-y;
+  user-select: none;
   padding: 0 4px;
   -webkit-mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
   mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+}
+
+.tasks-mini-strip--vertical {
+  touch-action: pan-x;
 }
 
 .tasks-mini-strip::-webkit-scrollbar { display: none; }
@@ -7117,14 +7124,18 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   box-shadow: none;
 }
 
-/* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮横移。
+/* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮/按住拖动。
    字号回展开卡原档 10.5px；两端渐隐遮罩去掉——胶囊里是"还能滚"的暗示，
    展开卡里链路几乎满宽，头尾星位正好落进渐隐区，字会看不清。 */
 .task-chain .tasks-mini-strip {
-  cursor: default;
+  cursor: grab;
   font-size: 10.5px;
   -webkit-mask-image: none;
   mask-image: none;
+}
+
+.task-chain .tasks-mini-strip:active {
+  cursor: grabbing;
 }
 
 .task-chain-hop {

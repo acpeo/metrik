@@ -5633,6 +5633,50 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
       strip.scrollLeft = current.offsetLeft + current.offsetWidth / 2 - strip.clientWidth / 2;
     }
   }, [currentKey, vertical]);
+  // 按住拖拽滚动（鼠标左键 / 触屏）：按下记录起点，移动 4px 起算拖动，
+  // 松开时若拖动过则吞掉紧随的 click——迷你条上点击=展开，拖完不该展开。
+  const dragRef = useRef(null);
+  const onStripPointerDown = (event) => {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    const target = event.currentTarget;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: target.scrollLeft,
+      scrollTop: target.scrollTop,
+      moved: false,
+    };
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch {
+      /* 旧运行时无 capture 也能靠后续 pointermove 工作 */
+    }
+  };
+  const onStripPointerMove = (event) => {
+    const drag = dragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    drag.moved = true;
+    const target = event.currentTarget;
+    if (vertical) target.scrollTop = drag.scrollTop - dy;
+    else target.scrollLeft = drag.scrollLeft - dx;
+  };
+  const onStripPointerEnd = (event) => {
+    const drag = dragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    dragRef.current = null;
+    if (!drag.moved) return;
+    const target = event.currentTarget;
+    const swallow = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    target.addEventListener("click", swallow, { capture: true, once: true });
+    window.setTimeout(() => target.removeEventListener("click", swallow, { capture: true }), 120);
+  };
   return (
     <span
       role={onExpand ? "button" : undefined}
@@ -5641,6 +5685,10 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
       className={`tasks-mini-strip${vertical ? " tasks-mini-strip--vertical" : ""}`}
       ref={stripRef}
       onClick={onExpand}
+      onPointerDown={onStripPointerDown}
+      onPointerMove={onStripPointerMove}
+      onPointerUp={onStripPointerEnd}
+      onPointerCancel={onStripPointerEnd}
       onKeyDown={
         onExpand
           ? (event) => {
@@ -5651,7 +5699,7 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
             }
           : undefined
       }
-      title="点击展开任务追踪 · 滚轮滑动查看链路"
+      title="点击展开任务追踪 · 滚轮或按住拖动查看链路"
       onWheel={(event) => {
         const target = event.currentTarget;
         // 行模式滚轮（deltaMode 1，deltaY≈3）按行高归一，否则一格只挪 3px；
