@@ -6532,11 +6532,28 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   padding: 3px 0;
   scrollbar-width: thin;
   scrollbar-color: rgba(127, 130, 136, 0.4) transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 源项目小组件的语言：每个分区是独立的一块 16px 圆角卡（白 0.06 面 + 白 0.09 描边
+   + 内高光），任务一张卡、星位上下文一张卡，滚动容器只负责间距。 */
+.tasks-card {
   background: rgba(255, 255, 255, 0.06);
   border-radius: 16px;
+  padding: 3px 0;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.09),
     inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.tasks-card-head {
+  margin: 0;
+  padding: 7px 15px 3px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  opacity: 0.5;
 }
 
 .tasks-window-body::-webkit-scrollbar {
@@ -7174,7 +7191,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 /* ── 任务小组件三档外观（跟随原项目的深色/浅色/透明档）────────────── */
 
 /* 浅色玻璃：卡面用 glass-light 的白 0.36 + 深色发丝描边；墨色继承壳的深墨 */
-.widget-shell--transparent.widget-shell--glass-light .tasks-window-body {
+.widget-shell--transparent.widget-shell--glass-light .tasks-card {
   background: rgba(255, 255, 255, 0.36);
   box-shadow:
     0 0 0 1px rgba(31, 33, 36, 0.08),
@@ -7218,7 +7235,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 /* 透明档（深墨）：不铺卡面，只留深色发丝内描边——与原项目 clear 档同规 */
-.widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .tasks-window-body {
+.widget-shell--transparent.widget-shell--glass-clear:not(.widget-shell--glass-ink-light) .tasks-card {
   background: transparent;
   box-shadow: inset 0 0 0 1px rgba(31, 33, 36, 0.1);
 }
@@ -7230,7 +7247,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 /* 透明档（白墨）：发丝线换浅色一档 */
-.widget-shell--transparent.widget-shell--glass-ink-light .tasks-window-body {
+.widget-shell--transparent.widget-shell--glass-ink-light .tasks-card {
   background: transparent;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }

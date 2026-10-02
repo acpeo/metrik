@@ -2315,21 +2315,23 @@ function TasksWidgetWindow({
               {tasks.length ? "暂无任务记录" : "等待首次同步…（主窗口 设置 → 任务追踪 配置 Gateway）"}
             </p>
           )}
-          {active.map((task) => (
-            <Fragment key={`${task.gateway}:${task.taskId}`}>
-              {renderActiveRow(task)}
-              {task.status === "running" && (
-                <TaskChainStepper
-                  hops={chainHopsFor(task, chainIndex)}
-                  currentTaskId={task.taskId}
-                  agentNameMap={agentNameMap}
-                />
-              )}
-            </Fragment>
-          ))}
+          <div className="tasks-card">
+            {active.map((task) => (
+              <Fragment key={`${task.gateway}:${task.taskId}`}>
+                {renderActiveRow(task)}
+                {task.status === "running" && (
+                  <TaskChainStepper
+                    hops={chainHopsFor(task, chainIndex)}
+                    currentTaskId={task.taskId}
+                    agentNameMap={agentNameMap}
+                  />
+                )}
+              </Fragment>
+            ))}
+          </div>
           {usageSessions.length > 0 && (
-            <>
-              <p className="tasks-window-divider">星位上下文</p>
+            <div className="tasks-card tasks-usage-card">
+              <p className="tasks-card-head">星位上下文</p>
               <div className="tasks-usage-list">
                 {usageSessions.map((session) => {
                   const name = agentDisplayName(agentNameMap, session.agentId) || session.agentId || session.key;
@@ -2370,7 +2372,7 @@ function TasksWidgetWindow({
                   );
                 })}
               </div>
-            </>
+            </div>
           )}
         </section>
       </div>
