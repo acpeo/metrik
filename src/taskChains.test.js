@@ -88,18 +88,19 @@ test("agent name map resolves both gateway-prefixed and short agent ids", () => 
 });
 
 test("usage sessions drop cron/idless sessions, sort by recency, cap at limit", () => {
+  const now = Date.now();
   const sessions = [
-    { key: "agent:tianshu:cron:cb75:run:e1", updatedAt: 900 },
-    { key: "agent:yaoguang:feishu:group:oc_b15", updatedAt: 100 },
-    { key: "agent:tianshu:main", updatedAt: 300 },
-    { key: "agent:tianxuan:feishu:group:oc_b15", updatedAt: 200 },
+    { key: "agent:tianshu:cron:cb75:run:e1", updatedAt: now - 900 },
+    { key: "agent:yaoguang:feishu:group:oc_b15", isGroup: true, updatedAt: now - 100 },
+    { key: "agent:tianshu:main", updatedAt: now - 300 },
+    { key: "agent:tianxuan:feishu:group:oc_b15", isGroup: true, updatedAt: now - 200 },
     { key: "agent:tianji:feishu:group:oc_b15" }, // 无 updatedAt：空闲脏数据，剔除
-    { key: "", updatedAt: 50 }, // 无 key，剔除
+    { key: "", updatedAt: now - 50 }, // 无 key，剔除
     null,
   ];
-  const picked = selectUsageSessions(sessions, { limit: 2 });
+  const picked = selectUsageSessions(sessions, { limit: 2, nowMs: now });
   assert.deepEqual(picked.map((session) => session.key), [
-    "agent:tianshu:main",
+    "agent:yaoguang:feishu:group:oc_b15",
     "agent:tianxuan:feishu:group:oc_b15",
   ]);
 });
@@ -107,4 +108,24 @@ test("usage sessions drop cron/idless sessions, sort by recency, cap at limit", 
 test("usage sessions tolerate null/undefined input", () => {
   assert.deepEqual(selectUsageSessions(null), []);
   assert.deepEqual(selectUsageSessions(undefined), []);
+});
+
+test("stale main sessions stay hidden until DM'd, group sessions always show", () => {
+  const now = 1_800_000_000_000;
+  const sessions = [
+    // 天璇主会话：20 天没动、无估算 —— 私聊前不上屏
+    { key: "agent:tianxuan:main", isGroup: false, updatedAt: now - 20 * 24 * 3600_000 },
+    // 天璇群会话：再旧也是接力跳名单，常驻
+    { key: "agent:tianxuan:feishu:group:oc_b15", isGroup: true, updatedAt: now - 20 * 24 * 3600_000 },
+    // 天枢主会话：刚私聊过 → 上屏
+    { key: "agent:tianshu:main", isGroup: false, updatedAt: now - 60_000 },
+    // 主会话陈旧但带上下文估算 → 上屏（有信息量）
+    { key: "agent:main:main", isGroup: false, estimatedPromptTokens: 55_000, updatedAt: now - 3 * 24 * 3600_000 },
+  ];
+  const picked = selectUsageSessions(sessions, { nowMs: now });
+  assert.deepEqual(picked.map((session) => session.key), [
+    "agent:tianshu:main",
+    "agent:main:main",
+    "agent:tianxuan:feishu:group:oc_b15",
+  ]);
 });

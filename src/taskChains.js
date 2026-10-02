@@ -86,12 +86,16 @@ export function chainHopsFor(task, { childOf, parentOf, groups }) {
 
 /// 星位上下文（B 链路）展示集：sessions.list 会话里挑出该给用户看的。
 /// cron 会话（心跳/巡检）与无 updatedAt 的会话不进；按最近活动排序，最多 limit 条
-/// （真机北斗 = 7 个群会话 + 每星位主会话，10 够用且留余量）。
-export function selectUsageSessions(sessions, { limit = 10 } = {}) {
-  const list = (sessions ?? []).filter(
-    (session) =>
-      session && session.key && !session.key.includes(":cron:") && session.updatedAt,
-  );
+/// （真机北斗 = 7 个群会话 + 各星位主会话，10 够用且留余量）。
+/// 群会话（接力跳名单）常驻；主会话只在带上下文估算或 24h 内活跃时出现——
+/// 每个星位天生就有主会话，从没私聊过的是陈旧空壳，不上屏（私聊那一刻才会冒出来）。
+export function selectUsageSessions(sessions, { limit = 10, nowMs = Date.now() } = {}) {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const list = (sessions ?? []).filter((session) => {
+    if (!session?.key || session.key.includes(":cron:") || !session.updatedAt) return false;
+    if (session.isGroup) return true;
+    return Boolean(session.estimatedPromptTokens) || nowMs - session.updatedAt < DAY_MS;
+  });
   list.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   return list.slice(0, limit);
 }
