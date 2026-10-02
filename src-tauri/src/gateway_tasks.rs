@@ -748,6 +748,14 @@ fn default_state_dir() -> PathBuf {
 // 本地任务账本（突破官方 7 天保留）
 // ---------------------------------------------------------------------------
 
+/// 终态集合：落账的终态保护共用这一份判定，别再复制 matches! 列表。
+fn is_terminal_status(status: Option<&str>) -> bool {
+    matches!(
+        status,
+        Some("succeeded") | Some("failed") | Some("timed_out") | Some("cancelled") | Some("lost")
+    )
+}
+
 /// 每次快照把观察到的任务 upsert 进本地账本：
 /// - 运行中任务更新时间戳；终态任务落最终状态后不再被旧快照覆盖（观察合并
 ///   取"更完整"的记录：ended_at 补齐即视为更完整）。
@@ -794,14 +802,7 @@ pub fn upsert_tasks(
             None => continue,
         };
         let status = task.status.as_deref();
-        let has_terminal = matches!(
-            status,
-            Some("succeeded")
-                | Some("failed")
-                | Some("timed_out")
-                | Some("cancelled")
-                | Some("lost")
-        );
+        let has_terminal = is_terminal_status(status);
         // 终态保护：已落终态的行不被非终态快照回退（任务台账以官方为权威，
         // 但本地观测可能乱序到达——重连后 list 可能先给旧的 running 再给终态）。
         let existing_terminal: Option<Option<String>> = connection
@@ -812,10 +813,7 @@ pub fn upsert_tasks(
             )
             .ok();
         if let Some(Some(stored_status)) = existing_terminal {
-            let stored_is_terminal = matches!(
-                stored_status.as_str(),
-                "succeeded" | "failed" | "timed_out" | "cancelled" | "lost"
-            );
+            let stored_is_terminal = is_terminal_status(Some(stored_status.as_str()));
             if stored_is_terminal && !has_terminal {
                 continue;
             }

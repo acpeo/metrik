@@ -53,7 +53,7 @@ import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
 import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
-import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, selectUsageSessions } from "./taskChains.js";
+import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions } from "./taskChains.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow, isBalanceWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -1882,7 +1882,7 @@ function taskAccentClass(status) {
 /// 常驻在用量行下方；点击头部直达完整任务页。
 function WidgetTasksCard({ feed, onOpenTasks }) {
   const tasks = feed.tasks?.tasks || [];
-  const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
+  const active = tasks.filter(isActiveTask);
   const shown = active.slice(0, 3);
   const agents = (feed.agents?.agents || []).filter((agent) => agent.active);
   const now = Date.now();
@@ -1966,7 +1966,18 @@ function TasksWidgetWindow({
   const [collapsed, setCollapsed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [miniControlsOpen, setMiniControlsOpen] = useState(false);
-  const [miniOrientation, setMiniOrientation] = useState("horizontal");
+  // 迷你胶囊横竖：记进 localStorage（metrik:miniOrientation），重启保持上次选择；
+  // 首次/没存过 = 横条。
+  const [miniOrientation, setMiniOrientation] = useState(() =>
+    localStorage.getItem("metrik:miniOrientation") === "vertical" ? "vertical" : "horizontal",
+  );
+  const toggleMiniOrientation = () => {
+    setMiniOrientation((orientation) => {
+      const next = orientation === "horizontal" ? "vertical" : "horizontal";
+      localStorage.setItem("metrik:miniOrientation", next);
+      return next;
+    });
+  };
   // 链路样式：竖排链路（方案 2）/ 横排链路（方案 1）共存，标题栏一键切换。
   // 只作用于展开卡；迷你胶囊是胶囊形态，恒用横排。
   const [chainStyle, setChainStyle] = useState(() =>
@@ -1985,7 +1996,7 @@ function TasksWidgetWindow({
   const miniOrientationRef = useRef("horizontal");
   miniOrientationRef.current = miniOrientation;
   const tasks = feed.tasks?.tasks || [];
-  const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
+  const active = tasks.filter(isActiveTask);
   const now = Date.now();
   // 链路索引 + agent 显示名（北斗星名）。轮询每拍重建，任务量 ≤300 很便宜。
   const chainIndex = useMemo(() => buildTaskChains(tasks), [feed.tasks]);
@@ -2072,10 +2083,9 @@ function TasksWidgetWindow({
       const hasChain = hops.length >= 2;
       const chainText = hops
         .map((hop) => {
-          const done = hop.status === "succeeded";
-          const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
+          const { tone } = hopToneOf(hop);
           const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
-          return `${name}${done ? "✓" : failed ? "✕" : hop.status === "queued" ? "○" : "●"}`;
+          return `${hopGlyphOf(tone)}${name}`;
         })
         .join(" → ");
       return (
@@ -2212,7 +2222,7 @@ function TasksWidgetWindow({
                 <button
                   type="button"
                   className="strip-button"
-                  onClick={() => setMiniOrientation(miniVertical ? "horizontal" : "vertical")}
+                  onClick={toggleMiniOrientation}
                   aria-label={miniVertical ? "切换为横条" : "切换为竖条"}
                   title={miniVertical ? "切换为横条" : "切换为竖条"}
                 >
@@ -2314,8 +2324,8 @@ function TasksWidgetWindow({
             type="button"
             className={`window-action ${transparent ? "window-action--active" : ""}`}
             onClick={onCycleAppearance}
-            aria-label={`外观：${glassTint === "dark" ? "深色" : glassTint === "light" ? "浅色" : "透明"}`}
-            title="切换外观（深色 / 浅色 / 透明）"
+            aria-label={`切到${glassTint === "dark" ? "浅色" : glassTint === "light" ? "透明" : "深色"}`}
+            title={`切到${glassTint === "dark" ? "浅色" : glassTint === "light" ? "透明" : "深色"}`}
           >
             <CircleHalfTilt size={16} weight={transparent ? "fill" : "light"} aria-hidden="true" />
           </button>
@@ -5673,6 +5683,14 @@ function formatTaskDuration(startedMs, endedMs) {
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
 }
 
+/// 链路里的紧凑时长："4 分 0 秒"→"4分"；胶片条和时间线共用，别再复制 replace 链。
+function formatCompactDuration(startedMs, endedMs) {
+  return (formatTaskDuration(startedMs, endedMs) || "")
+    .replace(/ /g, "")
+    .replace(/0秒$/, "")
+    .replace(/0分$/, "");
+}
+
 const TASK_STATUS_META = {
   queued: { label: "排队中", className: "task-pill--queued" },
   running: { label: "运行中", className: "task-pill--running" },
@@ -5787,27 +5805,19 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
       }}
     >
       {hops.map((hop, index) => {
-        const done = hop.status === "succeeded";
-        const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
-        const pending = hop.status === "queued";
-        const current = hop.taskId === currentTaskId && !done && !failed;
-        const tone = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
+        const { tone, state } = hopToneOf(hop, currentTaskId);
         const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
-        const duration = (formatTaskDuration(hop.startedAtMs, hop.endedAtMs) || "")
-          .replace(/ /g, "")
-          .replace(/0秒$/, "")
-          .replace(/0分$/, "");
-        const state = done ? "已完成" : failed ? "失败" : pending ? "排队中" : "进行中";
+        const duration = formatCompactDuration(hop.startedAtMs, hop.endedAtMs);
         return (
           <Fragment key={`${hop.gateway ?? ""}:${hop.taskId}`}>
             {index > 0 && <i className="task-chain-link" aria-hidden="true" />}
             <span
-              ref={current ? currentRef : undefined}
+              ref={tone === "current" ? currentRef : undefined}
               className={`task-chain-hop task-chain-hop--${tone}`}
               title={`${name} · ${state}${duration ? ` · ${duration}` : ""}`}
             >
+              <span className="task-chain-glyph" aria-hidden="true">{hopGlyphOf(tone)}</span>
               <span className="task-chain-agent">{name}</span>
-              <span className="task-chain-glyph" aria-hidden="true">{done ? "✓" : failed ? "✕" : pending ? "○" : "●"}</span>
               {duration && !vertical && <small>{duration}</small>}
             </span>
           </Fragment>
@@ -5824,17 +5834,9 @@ function TaskChainTimeline({ hops, currentTaskId, agentNameMap }) {
   return (
     <ol className="task-timeline">
       {hops.map((hop) => {
-        const done = hop.status === "succeeded";
-        const failed = hop.status === "failed" || hop.status === "timed_out" || hop.status === "lost";
-        const pending = hop.status === "queued";
-        const current = hop.taskId === currentTaskId && !done && !failed;
-        const tone = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
+        const { tone, current, state } = hopToneOf(hop, currentTaskId);
         const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
-        const duration = (formatTaskDuration(hop.startedAtMs, hop.endedAtMs) || "")
-          .replace(/ /g, "")
-          .replace(/0秒$/, "")
-          .replace(/0分$/, "");
-        const state = done ? "已完成" : failed ? "失败" : pending ? "排队中" : "进行中";
+        const duration = formatCompactDuration(hop.startedAtMs, hop.endedAtMs);
         return (
           <li
             key={`${hop.gateway ?? ""}:${hop.taskId}`}
@@ -5842,11 +5844,12 @@ function TaskChainTimeline({ hops, currentTaskId, agentNameMap }) {
             title={`${name} · ${state}${duration ? ` · ${duration}` : ""}`}
           >
             <span className="task-timeline-glyph" aria-hidden="true">
-              {done ? "✓" : failed ? "✕" : pending ? "○" : "●"}
+              {hopGlyphOf(tone)}
             </span>
             <span className="task-timeline-name">{name}</span>
-            <span className="task-timeline-title">{hop.title || hop.taskId}</span>
-            {duration ? <small>{duration}</small> : null}
+            {/* 当前跳的标题/时长就是组头那份，不重复；其余跳是各自的任务名 */}
+            {!current && <span className="task-timeline-title">{hop.title || hop.taskId}</span>}
+            {!current && duration ? <small>{duration}</small> : null}
             {current && hop.progressSummary ? (
               <p className="task-timeline-progress" title={hop.progressSummary}>
                 <em>正在：</em>
@@ -5975,7 +5978,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
 
   const data = state.data;
   const tasks = data?.tasks || [];
-  const activeCount = tasks.filter((task) => task.status === "running" || task.status === "queued").length;
+  const activeCount = tasks.filter(isActiveTask).length;
   const filters = [
     { id: "active", label: `进行中 (${activeCount})` },
     { id: "all", label: `全部 (${tasks.length})` },
@@ -6093,7 +6096,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
       ) : tasks.length > 0 ? (
         <div className="task-list">
           {tasks.map((task) => {
-            const isActive = task.status === "running" || task.status === "queued";
+            const isActive = isActiveTask(task);
             const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
             const stale = isActive && now - lastSeen > STALE_MS;
             return (

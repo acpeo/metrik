@@ -6,6 +6,9 @@ import {
   buildAgentNameMap,
   buildTaskChains,
   chainHopsFor,
+  hopGlyphOf,
+  hopToneOf,
+  isActiveTask,
   selectUsageSessions,
 } from "./taskChains.js";
 
@@ -128,4 +131,30 @@ test("stale main sessions stay hidden until DM'd, group sessions always show", (
     "agent:main:main",
     "agent:tianxuan:feishu:group:oc_b15",
   ]);
+});
+
+test("hopToneOf: 四档状态映射，current 只认正在跑的任务本身（状态驱动不点名）", () => {
+  assert.equal(hopToneOf({ status: "succeeded", taskId: "a" }, "x").tone, "done");
+  assert.equal(hopToneOf({ status: "failed", taskId: "a" }, "a").tone, "failed");
+  assert.equal(hopToneOf({ status: "timed_out", taskId: "a" }, "a").tone, "failed");
+  assert.equal(hopToneOf({ status: "queued", taskId: "a" }, "a").tone, "pending");
+  const running = hopToneOf({ status: "running", taskId: "a" }, "a");
+  assert.equal(running.tone, "current");
+  assert.equal(running.current, true);
+  assert.equal(hopToneOf({ status: "running", taskId: "a" }, "b").current, false);
+});
+
+test("hopGlyphOf: 字形与 tone 一一对应", () => {
+  assert.equal(hopGlyphOf("done"), "✓");
+  assert.equal(hopGlyphOf("failed"), "✕");
+  assert.equal(hopGlyphOf("pending"), "○");
+  assert.equal(hopGlyphOf("current"), "●");
+});
+
+test("isActiveTask: running/queued 算活跃，其余与缺状态不算", () => {
+  assert.equal(isActiveTask({ status: "running" }), true);
+  assert.equal(isActiveTask({ status: "queued" }), true);
+  assert.equal(isActiveTask({ status: "succeeded" }), false);
+  assert.equal(isActiveTask({}), false);
+  assert.equal(isActiveTask(null), false);
 });

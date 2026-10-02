@@ -7070,6 +7070,17 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   align-self: center;
 }
 
+/* 横条墨迹光学补偿：盒子全同心，但 ● 墨迹偏高 ~1px、横线偏低 ~1px（不同字号
+   的字形在盒内不对称，上色截图像素实测）。各向名字的视觉中心收拢半像素，
+   只动横条——竖条的墨迹偏置方向不同，另在 --vertical 的名字上补偿。 */
+.tasks-mini-strip:not(.tasks-mini-strip--vertical) .task-chain-glyph {
+  transform: translateY(0.5px);
+}
+
+.tasks-mini-strip:not(.tasks-mini-strip--vertical) .task-chain-link {
+  transform: translateY(-1px);
+}
+
 .tasks-mini-strip .task-chain-hop--current .task-chain-agent {
   color: rgba(255, 255, 255, 0.96);
 }
@@ -7096,15 +7107,19 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .tasks-mini-strip--vertical .task-chain-hop {
   flex-direction: column;
+  align-items: center; /* 名字/呼吸点/竖线共享中轴，别各自靠左 */
   gap: 3px;
   padding: 2px 0;
 }
 
-/* 星名竖排：一字一格（用户点名），呼吸点放名字下方 */
+/* 星名竖排：一字一格（用户点名），呼吸点放名字上方（与明细时间线同序）。
+   竖排（vertical-rl）墨迹在盒内偏右 ~1.5px（字体排版偏置，上色截图像素实测），
+   名字左移补偿，与呼吸点/竖线共享视觉中轴。 */
 .tasks-mini-strip--vertical .task-chain-agent {
   writing-mode: vertical-rl;
   letter-spacing: 0.08em;
   line-height: 1;
+  transform: translateX(-1.5px);
 }
 
 /* 跑马灯里的紧凑链：小一号、零外距，时长不进横条（tooltip 与展开卡里有） */
@@ -7159,11 +7174,11 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 /* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮/按住拖动。
-   字号回展开卡原档 10.5px；两端渐隐遮罩去掉——胶囊里是"还能滚"的暗示，
+   字号与明细跳名同档 11.5px；两端渐隐遮罩去掉——胶囊里是"还能滚"的暗示，
    展开卡里链路几乎满宽，头尾星位正好落进渐隐区，字会看不清。 */
 .task-chain .tasks-mini-strip {
   cursor: grab;
-  font-size: 10.5px;
+  font-size: 11.5px;
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -7248,11 +7263,11 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   position: relative; /* 压在引导线之上 */
   width: 13px;
   text-align: center;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .task-timeline-name {
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 560;
   letter-spacing: -0.01em;
   opacity: 0.92;
@@ -7260,7 +7275,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .task-timeline-title {
-  font-size: 10.5px;
+  font-size: 11.5px;
   opacity: 0.62;
   white-space: nowrap;
   overflow: hidden;
@@ -7268,7 +7283,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .task-timeline-hop small {
-  font-size: 9px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
   opacity: 0.5;
   white-space: nowrap;
@@ -7277,7 +7292,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .task-timeline-progress {
   grid-column: 2 / -1;
   margin: 0;
-  font-size: 10px;
+  font-size: 10.5px;
   letter-spacing: -0.01em;
   opacity: 0.55;
   white-space: nowrap;
@@ -7420,4 +7435,11 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-ink-light .widget-agent-chip {
   border-color: rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* 卡内最后一组不带组底横线：卡自己的圆角收边就是边界。两条线只隔 3px
+   看着双层，且组线是直的、戳出 16px 圆角。放文件末尾压过上面各档组线
+   （clear 档带 :not 是 (0,4,0)，这里同 (0,4,0) 靠源码顺序赢平局）。 */
+.widget-shell--transparent .tasks-window-body .tasks-card .widget-task-group:last-child {
+  box-shadow: none;
 }

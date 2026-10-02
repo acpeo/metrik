@@ -99,3 +99,26 @@ export function selectUsageSessions(sessions, { limit = 10, nowMs = Date.now() }
   list.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   return list.slice(0, limit);
 }
+
+/// 跳状态档：done / failed / pending / current 四色同语言，迷你行/胶片条/时间线
+/// 三处组件共用——状态判定改一处即全生效，别再各自复制。
+/// current = 正在跑的那个任务本身（链上同一时刻至多一个）。
+export function hopToneOf(hop, currentTaskId) {
+  const done = hop?.status === "succeeded";
+  const failed = hop?.status === "failed" || hop?.status === "timed_out" || hop?.status === "lost";
+  const pending = hop?.status === "queued";
+  const current = hop?.taskId != null && hop.taskId === currentTaskId && !done && !failed;
+  const tone = failed ? "failed" : done ? "done" : pending ? "pending" : "current";
+  const state = done ? "已完成" : failed ? "失败" : pending ? "排队中" : "进行中";
+  return { done, failed, pending, current, tone, state };
+}
+
+/// 状态符：✓ 完成 / ✕ 失败 / ○ 待跑 / ● 进行中。
+export function hopGlyphOf(tone) {
+  return tone === "done" ? "✓" : tone === "failed" ? "✕" : tone === "pending" ? "○" : "●";
+}
+
+/// 活跃任务：运行中或排队。任务卡/任务窗/任务页共用同一条口径。
+export function isActiveTask(task) {
+  return task?.status === "running" || task?.status === "queued";
+}
