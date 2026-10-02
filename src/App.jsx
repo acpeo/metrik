@@ -2149,9 +2149,11 @@ function TasksWidgetWindow({
           )}
           <div className={`tasks-mini-controls${miniControlsOpen ? " tasks-mini-controls--open" : ""}`}>
             <span className="strip-control-slot strip-control-slot--menu" title={feed.live ? "实时同步中" : "未同步"}>
-              {/* 同步灯只在断线时亮（橙）：链上当前跳的脉冲已表达"活着"，
-                  常绿灯是重复噪音（用户指出）。悬停时让位给 •••。 */}
-              {!feed.live && <i className="status-dot status-dot--error" aria-hidden="true" />}
+              {/* 状态灯常亮（原版语义）：绿=实时同步中，橙=断线。悬停时让位给 •••。 */}
+              <i
+                className={`status-dot ${feed.live ? "" : "status-dot--error"}`}
+                aria-hidden="true"
+              />
               <button
                 type="button"
                 className={`strip-button strip-button--menu ${miniControlsOpen ? "strip-button--active" : ""}`}
