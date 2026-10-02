@@ -1197,7 +1197,7 @@ mod webview_compat {
                     .collect();
                 if parts.len() == 4 && parts[0] > 0 {
                     let quad = [parts[0], parts[1], parts[2], parts[3]];
-                    if best.map_or(true, |b| quad > b) {
+                    if best.is_none_or(|b| quad > b) {
                         best = Some(quad);
                     }
                 }
