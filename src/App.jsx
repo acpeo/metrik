@@ -2379,36 +2379,30 @@ function TasksWidgetWindow({
               const hops = task.status === "running" ? chainHopsFor(task, chainIndex) : [];
               // 排队任务若是某条运行中链上的成员，时间线里已经有了，不再单独占行
               if (task.status === "queued" && chainMemberIds.has(task.taskId)) return null;
-              if (hops.length < 2) {
-                return (
-                  <Fragment key={`${task.gateway}:${task.taskId}`}>
-                    {renderActiveRow(task)}
-                    {renderProgressLine(task)}
-                  </Fragment>
-                );
-              }
-              // 有链路的任务：行 + 链路包成一组，底线挪到组底。
-              // 链路本体二选一：竖直时间线（进度挂在当前跳行下）/ 横排速览
-              //（速览塞不下，进度行插在任务行和链路之间），标题栏切换。
+              // 结构规则（一处管全部）：每个任务整体包成一组 = 任务行 + 它的附属行
+              //（进度行 / 链路），组的底线替代任务行的底线——附属行永远在横线之上，
+              // 不会看起来像下一个任务的。有无进度/链路都走同一条路。
+              const hasChain = hops.length >= 2;
               return (
                 <div className="widget-task-group" key={`${task.gateway}:${task.taskId}`}>
                   {renderActiveRow(task)}
-                  {chainStyle === "strip" && renderProgressLine(task)}
-                  {chainStyle === "strip" ? (
-                    <div className="task-chain">
-                      <ChainFilmstrip
+                  {(!hasChain || chainStyle === "strip") && renderProgressLine(task)}
+                  {hasChain &&
+                    (chainStyle === "strip" ? (
+                      <div className="task-chain">
+                        <ChainFilmstrip
+                          hops={hops}
+                          currentTaskId={task.taskId}
+                          agentNameMap={agentNameMap}
+                        />
+                      </div>
+                    ) : (
+                      <TaskChainTimeline
                         hops={hops}
                         currentTaskId={task.taskId}
                         agentNameMap={agentNameMap}
                       />
-                    </div>
-                  ) : (
-                    <TaskChainTimeline
-                      hops={hops}
-                      currentTaskId={task.taskId}
-                      agentNameMap={agentNameMap}
-                    />
-                  )}
+                    ))}
                 </div>
               );
             })}
