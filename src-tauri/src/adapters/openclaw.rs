@@ -34,7 +34,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct OpenclawAdapter {
     roots: Vec<PathBuf>,
@@ -262,6 +262,7 @@ impl AgentAdapter for OpenclawAdapter {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::path::Path;
 
     fn write_temp(name: &str, body: &str) -> PathBuf {
         let dir =
@@ -278,7 +279,7 @@ mod tests {
         let meta = path.metadata().unwrap();
         let candidate = SourceCandidate {
             source_id: "s".into(),
-            path: path.clone(),
+            path: path.to_path_buf(),
             size: meta.len(),
             mtime_ns: 1,
         };
