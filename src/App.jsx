@@ -2172,6 +2172,21 @@ function TasksWidgetWindow({
               <>
                 <button
                   type="button"
+                  className="strip-button"
+                  onClick={() => {
+                    if (refreshing) return;
+                    setRefreshing(true);
+                    feed.refresh?.();
+                    window.setTimeout(() => setRefreshing(false), 900);
+                  }}
+                  disabled={refreshing}
+                  aria-label="强制刷新任务"
+                  title="强制刷新任务"
+                >
+                  <ArrowsClockwise size={15} weight="light" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
                   className={`strip-button ${pinned ? "strip-button--active" : ""}`}
                   onClick={() => {
                     const next = !pinned;

@@ -6869,11 +6869,22 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 /* 状态灯与 ••• 同槽（原 strip-control-slot--menu 模式）：
    默认见灯，悬停或展开时灯让位、••• 现身 */
+/* 同步状态灯：空心圆环——区别于链上的实心任务点（圆环=连接状态），
+   绿=同步中、橙=断线；悬停让位 ••• 的 visibility 规则照旧生效 */
 .tasks-mini-controls .status-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   margin: 0;
   flex: none;
+  background: transparent;
+  border: 1.5px solid var(--green);
+  box-shadow: none;
+}
+
+.tasks-mini-controls .status-dot--error {
+  background: transparent;
+  border-color: #c96a45;
+  box-shadow: none;
 }
 
 .tasks-mini:hover .strip-control-slot--menu .status-dot,
