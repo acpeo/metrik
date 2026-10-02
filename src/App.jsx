@@ -125,6 +125,7 @@ import {
   closeCurrentWindow,
   emitGlassTint,
   onGlassTintChanged,
+  resizeCurrentWindow,
   setPinnedHoverTargetOpacity,
   setWindowPinned,
   setWindowUiScale,
@@ -1945,6 +1946,7 @@ function TasksWidgetWindow({
   onClose,
 }) {
   const [pinned, setPinned] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const tasks = feed.tasks?.tasks || [];
   const active = tasks.filter((task) => task.status === "running" || task.status === "queued");
   const recent = tasks
@@ -1962,6 +1964,25 @@ function TasksWidgetWindow({
     isMac: IS_MAC,
     loading: false,
   });
+  if (collapsed) {
+    return (
+      <main className={shellAppearance.className}>
+        <button
+          type="button"
+          className="tasks-mini"
+          onClick={() => {
+            setCollapsed(false);
+            runWindowAction(() => resizeCurrentWindow(300, 432));
+          }}
+          title="展开任务追踪"
+        >
+          <span className={`tasks-mini-dot ${feed.live ? "tasks-mini-dot--on" : ""}`} aria-hidden="true" />
+          <strong>{active.length}</strong>
+          <small>任务</small>
+        </button>
+      </main>
+    );
+  }
   const renderRow = (task, dimmed) => {
     const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
     const isActiveState = task.status === "running" || task.status === "queued";
@@ -2001,11 +2022,23 @@ function TasksWidgetWindow({
           <button
             type="button"
             className="window-action"
+            onClick={() => {
+              setCollapsed(true);
+              runWindowAction(() => resizeCurrentWindow(64, 64));
+            }}
+            aria-label="折叠为迷你胶囊"
+            title="折叠为迷你胶囊"
+          >
+            <ArrowsInLineVertical size={16} weight="light" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`window-action ${transparent ? "window-action--active" : ""}`}
             onClick={onCycleAppearance}
             aria-label={`外观：${glassTint === "dark" ? "深色" : glassTint === "light" ? "浅色" : "透明"}`}
             title="切换外观（深色 / 浅色 / 透明）"
           >
-            <CircleHalfTilt size={16} weight="light" aria-hidden="true" />
+            <CircleHalfTilt size={16} weight={transparent ? "fill" : "light"} aria-hidden="true" />
           </button>
           <button
             type="button"

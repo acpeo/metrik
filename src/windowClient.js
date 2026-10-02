@@ -1800,6 +1800,13 @@ async function showMainExpanded() {
   });
 }
 
+/// 调整当前窗口尺寸（任务小组件的迷你胶囊形态切换用）。
+async function resizeCurrentWindow(width, height) {
+  const api = await windowApi();
+  if (!api) return;
+  await api.getCurrentWindow().setSize(new api.LogicalSize(width, height)).catch(() => {});
+}
+
 /// 关闭当前窗口：Tauri 下走窗口 API（新附窗没有宿主 window.close 语义）。
 async function closeCurrentWindow() {
   if (!isDesktop()) {
@@ -1917,6 +1924,7 @@ export {
   closeCurrentWindow,
   emitGlassTint,
   onGlassTintChanged,
+  resizeCurrentWindow,
   setPinnedHoverBehavior,
   setPinnedHoverTargetOpacity,
   setWindowPinned,

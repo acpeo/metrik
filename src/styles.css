@@ -6601,6 +6601,48 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   color: #6fc49a;
 }
 
+/* ── 任务小组件 · 迷你胶囊形态（折叠态）──────────────────────────── */
+
+.tasks-mini {
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
+  margin: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.tasks-mini strong {
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tasks-mini small {
+  font-size: 10px;
+  opacity: 0.62;
+}
+
+.tasks-mini-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, currentColor 38%, transparent);
+}
+
+.tasks-mini-dot--on {
+  background: #6fc49a;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+
 /* ── 任务小组件三档外观（跟随原项目的深色/浅色/透明档）────────────── */
 
 /* 浅色玻璃：卡面用 glass-light 的白 0.36 + 深色发丝描边；墨色继承壳的深墨 */
