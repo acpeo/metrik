@@ -1978,7 +1978,6 @@ function TasksWidgetWindow({
   const recentlyEnded = tasks.filter(
     (task) => task.status !== "running" && task.status !== "queued" && now - taskEndedAt(task) < recentWindowMs,
   );
-  const recent = recentlyEnded.slice(0, 6);
   // 星位上下文（B 链路）：sessions.list 的会话级用量（选择逻辑在 taskChains.js）。
   const usageSessions = useMemo(
     () => selectUsageSessions(feed.agents?.sessions),
@@ -2242,25 +2241,6 @@ function TasksWidgetWindow({
       </div>
     );
   };
-  // 近期完成：轻量行——一个小状态点 + 暗标题 + 时长，不与运行中任务抢视线
-  // （原小组件里次要信息都是"点 + 弱文字"语言，如活跃 Agent 的 status dot）。
-  const renderBriefRow = (task) => {
-    const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
-    const tone = task.status === "failed" || task.status === "timed_out" || task.status === "lost"
-      ? "failed"
-      : task.status === "cancelled"
-        ? "neutral"
-        : "done";
-    return (
-      <div className="widget-task-brief" key={`${task.gateway}:${task.taskId}`}>
-        <i className={`widget-task-dot widget-task-dot--${tone}`} aria-hidden="true" />
-        <span className="widget-task-title" title={task.title || task.taskId}>
-          {task.title || task.taskId}
-        </span>
-        <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
-      </div>
-    );
-  };
   return (
     <main className={shellAppearance.className}>
       <h1 className="sr-only">Metrik Gateway 任务追踪小组件</h1>
@@ -2330,7 +2310,7 @@ function TasksWidgetWindow({
       </header>
       <div className="tasks-window-content">
         <section className="widget-tasks tasks-window-body" aria-label="Gateway 任务">
-          {active.length === 0 && recent.length === 0 && (
+          {active.length === 0 && usageSessions.length === 0 && (
             <p className="widget-tasks-empty">
               {tasks.length ? "暂无任务记录" : "等待首次同步…（主窗口 设置 → 任务追踪 配置 Gateway）"}
             </p>
@@ -2347,8 +2327,6 @@ function TasksWidgetWindow({
               )}
             </Fragment>
           ))}
-          {active.length > 0 && recent.length > 0 && <p className="tasks-window-divider">近期完成</p>}
-          {recent.map((task) => renderBriefRow(task))}
           {usageSessions.length > 0 && (
             <>
               <p className="tasks-window-divider">星位上下文</p>

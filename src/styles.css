@@ -7088,10 +7088,25 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   display: flex;
   align-items: center;
   gap: 5px;
-  margin: 1px 11px 3px 15px;
+  /* 缩进到任务行标题起点 + 左侧肘形连接线：明确这条链属于上面那行运行中任务 */
+  position: relative;
+  margin: 2px 11px 3px 43px;
   overflow: hidden;
   font-size: 10.5px;
   white-space: nowrap;
+}
+
+.task-chain::before {
+  content: "";
+  position: absolute;
+  left: -15px;
+  top: -11px;
+  width: 14px;
+  height: 15px;
+  border-left: 1px solid rgba(31, 33, 36, 0.25);
+  border-bottom: 1px solid rgba(31, 33, 36, 0.25);
+  border-bottom-left-radius: 9px;
+  pointer-events: none;
 }
 
 .task-chain-hop {
@@ -7157,6 +7172,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-chain {
   color: rgba(255, 255, 255, 0.8);
+}
+.widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .task-chain::before {
+  border-color: rgba(255, 255, 255, 0.26);
 }
 /* 迷你条里的 strip-button 在深色 HUD 上（原覆盖只挂在 .strip-shell 下，够不到这） */
 .widget-shell--transparent:not(.widget-shell--glass-light):not(.widget-shell--glass-ink-light) .tasks-mini .strip-button {
