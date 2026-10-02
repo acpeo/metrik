@@ -23,10 +23,10 @@ import {
   DotsThree,
   EyeSlash,
   FileText,
-  FilmStrip,
   FolderSimple,
   FunnelSimple,
   GearSix,
+  GitCommit,
   HardDrives,
   ListChecks,
   Minus,
@@ -1967,8 +1967,8 @@ function TasksWidgetWindow({
   const [refreshing, setRefreshing] = useState(false);
   const [miniControlsOpen, setMiniControlsOpen] = useState(false);
   const [miniOrientation, setMiniOrientation] = useState("horizontal");
-  // 链路样式：竖直时间线（方案 2）/ 横向胶片条（方案 1）共存，标题栏一键切换。
-  // 只作用于展开卡；迷你胶囊是胶囊形态，恒用胶片条。
+  // 链路样式：竖排链路（方案 2）/ 横排链路（方案 1）共存，标题栏一键切换。
+  // 只作用于展开卡；迷你胶囊是胶囊形态，恒用横排。
   const [chainStyle, setChainStyle] = useState(() =>
     localStorage.getItem("metrik:chainStyle") === "strip" ? "strip" : "timeline",
   );
@@ -2323,14 +2323,14 @@ function TasksWidgetWindow({
             type="button"
             className={`window-action ${chainStyle === "timeline" ? "window-action--active" : ""}`}
             onClick={toggleChainStyle}
-            aria-label={`链路样式：${chainStyle === "timeline" ? "竖直时间线" : "横向胶片条"}（点击切换）`}
+            aria-label={`链路样式：${chainStyle === "timeline" ? "竖排链路" : "横排链路"}`}
             aria-pressed={chainStyle === "timeline"}
-            title={`链路样式：${chainStyle === "timeline" ? "竖直时间线" : "横向胶片条"}（点击切换）`}
+            title={`链路样式：${chainStyle === "timeline" ? "竖排链路" : "横排链路"}`}
           >
             {chainStyle === "timeline" ? (
               <TreeStructure size={16} weight="light" aria-hidden="true" />
             ) : (
-              <FilmStrip size={16} weight="light" aria-hidden="true" />
+              <GitCommit size={16} weight="light" aria-hidden="true" />
             )}
           </button>
           <button
