@@ -1632,7 +1632,14 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     #[cfg(target_os = "linux")]
     let menu = Menu::with_items(
         app,
-        &[&toggle, &expanded, &tasks_widget, &pinned, &separator, &quit],
+        &[
+            &toggle,
+            &expanded,
+            &tasks_widget,
+            &pinned,
+            &separator,
+            &quit,
+        ],
     )?;
     #[cfg(not(target_os = "linux"))]
     let menu = Menu::with_items(app, &[&toggle, &expanded, &tasks_widget, &separator, &quit])?;
