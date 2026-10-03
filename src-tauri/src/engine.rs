@@ -1,7 +1,7 @@
 use crate::adapters::{
     AgentAdapter, AntigravityAdapter, ClaudeAdapter, CodexAdapter, CursorAdapter, GrokAdapter,
-    HermesAdapter, KimiAdapter, OpencodeAdapter, PiAdapter, ScanDiagnostics,
-    SourceCandidate, WorkbuddyAdapter, ZcodeAdapter, CURSOR_USAGE_SETTING_KEY,
+    HermesAdapter, KimiAdapter, OpencodeAdapter, PiAdapter, ScanDiagnostics, SourceCandidate,
+    WorkbuddyAdapter, ZcodeAdapter, CURSOR_USAGE_SETTING_KEY,
 };
 #[cfg(test)]
 use crate::claude_hook;
