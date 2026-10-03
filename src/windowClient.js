@@ -16,6 +16,7 @@ import {
   isStableFloatingMode,
   monitorForWindowPosition,
   physicalWindowSize,
+  horizontalTasksHoverLayout,
   verticalStripHoverLocalLayout,
   verticalStripHoverLayout,
   viewportCorrectedPhysicalSize,
@@ -1247,6 +1248,64 @@ async function collapseTasksHover() {
   ]);
 }
 
+/// 任务小组件横条悬停详情卡：窗口向上长高放卡（上方放不下改向下），x 不动
+/// （卡片与条同宽通栏，横向挪窗会把贴屏边缘的条搬离光标）。与竖条共用
+/// tasksHoverRestore（同一窗同一时刻只有一张卡），数据变化重测卡高后重复
+/// 展开以 restore 为基准重算，不会滚雪球。返回卡片在新视口里的逻辑坐标
+/// （cardTop/cardLeft），预览（非 Windows）返回 null。
+async function expandTasksHoverHorizontal({ cardHeight, gap, anchorTop, anchorBottom }) {
+  if (!isWindowsPlatform()) return null;
+  const api = await windowApi();
+  if (!api) return null;
+  const appWindow = api.getCurrentWindow();
+  const [position, size, monitor, factor] = await Promise.all([
+    appWindow.outerPosition().catch(() => null),
+    appWindow.outerSize().catch(() => null),
+    api.currentMonitor().catch(() => null),
+    appWindow.scaleFactor().catch(() => 1),
+  ]);
+  const workArea = monitor?.workArea;
+  if (!size || !position || !workArea) return null;
+  if (!tasksHoverRestore) tasksHoverRestore = { position, size };
+  const base = tasksHoverRestore;
+  const scale = Number.isFinite(factor) && factor > 0 ? factor : 1;
+  const growHeight = Math.round((cardHeight + gap) * scale);
+  const layout = horizontalTasksHoverLayout({
+    stripPosition: base.position,
+    stripSize: base.size,
+    workArea: {
+      x: workArea.position.x,
+      y: workArea.position.y,
+      width: workArea.size.width,
+      height: workArea.size.height,
+    },
+    growHeight,
+    anchorTop: Math.round(anchorTop * scale),
+    anchorBottom: Math.round(anchorBottom * scale),
+    gap: Math.round(gap * scale),
+  });
+  if (!layout) return null;
+  const physical = await scaledPhysicalSize(
+    api,
+    appWindow,
+    base.size.width / scale,
+    base.size.height / scale + cardHeight + gap,
+    1,
+    scale,
+  );
+  await Promise.all([
+    appWindow.setSize(physical).catch(() => {}),
+    appWindow
+      .setPosition(new api.PhysicalPosition(Math.round(base.position.x), Math.round(layout.y)))
+      .catch(() => {}),
+  ]);
+  return {
+    side: layout.side,
+    cardTop: layout.cardTop / scale,
+    cardLeft: layout.cardLeft / scale,
+  };
+}
+
 /// 控制按钮就地展开会经 fit 观察器把窗口临时加高/加宽；展开前记下原生
 /// 几何，收起时一次性还原。收起若改走 resizeStripWindow，setSize 后面
 /// 跟着 reconcile 的多轮 setSize 和贴边锚定的 setPosition——WebView2 在
@@ -2008,6 +2067,7 @@ export {
   setWindowGlass,
   setTasksWidgetWindow,
   expandTasksHover,
+  expandTasksHoverHorizontal,
   collapseTasksHover,
   showMainExpanded,
   closeCurrentWindow,

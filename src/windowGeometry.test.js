@@ -5,6 +5,7 @@ import {
   desyncHealRetryDelayMs,
   floatingViewportSize,
   horizontalStripTargetWidth,
+  horizontalTasksHoverLayout,
   isDockAnchorPosition,
   isStableFloatingMode,
   monitorForWindowPosition,
@@ -253,4 +254,53 @@ test("desync heal retry cadence tolerates invalid attempt counters", () => {
   assert.equal(desyncHealRetryDelayMs(Number.NaN), 0);
   assert.equal(desyncHealRetryDelayMs(-3), 0);
   assert.equal(desyncHealRetryDelayMs(2.8), 600);
+});
+
+test("horizontal strip hover grows upward and keeps the card gap above the cell", () => {
+  // 条 224×36 @ (100,500)，长高 6+168=174：上方放得下 → 向上长，x 不动，
+  // 卡片与条同宽通栏（cardLeft=0），above 分支的 cardTop 恒等于 anchorTop
+  assert.deepEqual(
+    horizontalTasksHoverLayout({
+      stripPosition: { x: 100, y: 500 },
+      stripSize: { width: 224, height: 36 },
+      workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+      growHeight: 174,
+      anchorTop: 500,
+      anchorBottom: 536,
+      gap: 6,
+    }),
+    { side: "above", y: 326, cardTop: 500, cardLeft: 0 },
+  );
+});
+
+test("horizontal strip hover falls back to below when the top has no room", () => {
+  // 条贴着工作区顶（y=0）：向上放不下 → 向下长，卡贴格子下缘 + 间距
+  assert.deepEqual(
+    horizontalTasksHoverLayout({
+      stripPosition: { x: 100, y: 0 },
+      stripSize: { width: 224, height: 36 },
+      workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+      growHeight: 174,
+      anchorTop: 0,
+      anchorBottom: 36,
+      gap: 6,
+    }),
+    { side: "below", y: 0, cardTop: 42, cardLeft: 0 },
+  );
+});
+
+test("horizontal strip hover returns null when neither side fits", () => {
+  // 工作区高 120，条在 y=60：向上差 114、向下差 90 → 不扩窗不出卡
+  assert.equal(
+    horizontalTasksHoverLayout({
+      stripPosition: { x: 100, y: 60 },
+      stripSize: { width: 224, height: 36 },
+      workArea: { x: 0, y: 0, width: 1920, height: 120 },
+      growHeight: 174,
+      anchorTop: 60,
+      anchorBottom: 96,
+      gap: 6,
+    }),
+    null,
+  );
 });

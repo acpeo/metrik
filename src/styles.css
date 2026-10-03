@@ -323,6 +323,18 @@ button:focus-visible {
   margin: 1px 0 0;
 }
 
+/* 品牌同步灯的绿态呼吸：独立于"实时"指示的警示节奏（1.5s）——
+   呼吸灯要的是"平稳的活着"：3s 慢周期、浅起伏（透明度 1→0.55）。
+   加载黄灯快脉动、断线橙灯静止，三种节奏互不混淆。 */
+@keyframes brand-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.88); }
+}
+
+.widget-brand .status-dot:not(.status-dot--error):not(.status-dot--loading) {
+  animation: brand-breathe 3s ease-in-out infinite;
+}
+
 .widget-content {
   display: grid;
   min-height: 0;
@@ -745,6 +757,27 @@ button:focus-visible {
 .widget-refresh:disabled { cursor: default; }
 .widget-refresh:disabled:hover { color: #66686c; background: transparent; }
 .widget-refresh:disabled svg { animation: widget-refresh-spin 0.9s linear infinite; }
+
+/* 断线重试（发现 5 方向 B）：3 秒自动轮询下强制刷新无感，按钮只在断线时
+   渲染——橙色与状态圆环的断线色同语言 */
+.widget-refresh--retry {
+  width: auto;
+  gap: 4px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #e8a08e;
+  background: rgba(236, 122, 99, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(236, 122, 99, 0.35);
+}
+
+.widget-refresh--retry:hover {
+  color: #ffb4a0;
+  background: rgba(236, 122, 99, 0.18);
+}
+
+.widget-refresh--retry:disabled { color: rgba(232, 160, 142, 0.6); }
+.widget-refresh--retry:disabled:hover { color: rgba(232, 160, 142, 0.6); background: rgba(236, 122, 99, 0.1); }
 
 @keyframes widget-refresh-spin {
   to { transform: rotate(360deg); }
@@ -6955,6 +6988,53 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   font-variant-numeric: tabular-nums;
 }
 
+/* 竖条 +N 角标（首行链路之外的活跃/失败任务数）：有活干才存在，点击=展开。
+   绿=还有进行中，红=还有失败；浅色壳随动 */
+.tasks-mini-more--vertical {
+  flex: none;
+  align-self: center;
+  min-width: 26px;
+  margin-top: 2px;
+  padding: 2px 7px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  color: #6fc49a;
+  background: rgba(111, 196, 154, 0.14);
+  border: 1px solid rgba(111, 196, 154, 0.32);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 240ms var(--motion);
+}
+
+.tasks-mini-more--vertical:hover { background: rgba(111, 196, 154, 0.24); }
+
+.tasks-mini-more--vertical--failed {
+  color: #ec7a63;
+  background: rgba(236, 122, 99, 0.12);
+  border-color: rgba(236, 122, 99, 0.32);
+}
+
+.tasks-mini-more--vertical--failed:hover { background: rgba(236, 122, 99, 0.2); }
+
+.widget-shell--glass-light .tasks-mini-more--vertical {
+  color: #1f7a4d;
+  background: rgba(31, 122, 77, 0.1);
+  border-color: rgba(31, 122, 77, 0.28);
+}
+
+.widget-shell--glass-light .tasks-mini-more--vertical:hover { background: rgba(31, 122, 77, 0.18); }
+
+.widget-shell--glass-light .tasks-mini-more--vertical--failed {
+  color: #b3372f;
+  background: rgba(179, 55, 47, 0.08);
+  border-color: rgba(179, 55, 47, 0.28);
+}
+
+.widget-shell--glass-light .tasks-mini-more--vertical--failed:hover { background: rgba(179, 55, 47, 0.16); }
+
 .tasks-mini-dot {
   width: 6px;
   height: 6px;
@@ -7133,14 +7213,66 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.widget-shell--glass-light .tasks-hopcard {
+/* "其他任务"节：首行链路之外的任务（与竖条 +N 角标同源），最多 3 行+溢出提示 */
+.tasks-hopcard-extra {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+.tasks-hopcard-extra-head {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+.tasks-hopcard-extra-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.tasks-hopcard-extra-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: #6fc49a;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+.tasks-hopcard-extra-dot--failed { background: #ec7a63; animation: none; }
+.tasks-hopcard-extra-dot--pending {
+  background: color-mix(in srgb, currentColor 38%, transparent);
+  animation: none;
+}
+.tasks-hopcard-extra-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tasks-hopcard-extra-title--failed { color: #ff9c9c; }
+.tasks-hopcard-extra-agent {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.55;
+}
+/* 浅色跟随：卡片 Portal 在 body 下，壳的 glass-light 类够不到，由组件显式
+   挂 --light（0.20.8 起卡片走 Portal，旧的 .widget-shell--glass-light 前缀
+   规则已匹配不到，换成显式类） */
+.tasks-hopcard--light {
   background: rgba(251, 250, 247, 0.98);
   border-color: rgba(31, 33, 36, 0.12);
   color: rgba(31, 33, 36, 0.92);
   box-shadow: 0 10px 24px rgba(31, 33, 36, 0.18);
 }
-.widget-shell--glass-light .tasks-hopcard-progress em { color: #1f7a4d; }
-.widget-shell--glass-light .tasks-hopcard-error { color: #b3372f; }
+.tasks-hopcard--light .tasks-hopcard-progress em { color: #1f7a4d; }
+.tasks-hopcard--light .tasks-hopcard-error { color: #b3372f; }
+.tasks-hopcard--light .tasks-hopcard-extra { border-top-color: rgba(31, 33, 36, 0.1); }
+.tasks-hopcard--light .tasks-hopcard-extra-title--failed { color: #b3372f; }
 
 .tasks-mini-strip::-webkit-scrollbar { display: none; }
 

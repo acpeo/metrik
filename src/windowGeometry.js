@@ -204,6 +204,45 @@ function verticalStripHoverLayout({ railPosition, railSize, workArea, targetSize
   };
 }
 
+/// 横条悬停详情卡几何：窗口向上长高放卡（上方放不下改向下），x 一律不动——
+/// 卡片与条同宽通栏，横向挪窗会把贴屏幕边缘的条搬离光标（条不动、卡出现）。
+/// 输入输出均为物理像素。返回 null = 上下都放不下（调用方不扩窗不出卡）。
+/// cardTop 的 above 分支恒等于 anchorTop：窗口上移 growHeight 后，内容在新
+/// 视口里整体下移 growHeight，格子新 y 恰好回到原值。
+function horizontalTasksHoverLayout({
+  stripPosition,
+  stripSize,
+  workArea,
+  growHeight,
+  anchorTop,
+  anchorBottom,
+  gap,
+}) {
+  const values = [
+    stripPosition?.x,
+    stripPosition?.y,
+    stripSize?.width,
+    stripSize?.height,
+    workArea?.x,
+    workArea?.y,
+    workArea?.width,
+    workArea?.height,
+    growHeight,
+    anchorTop,
+    anchorBottom,
+    gap,
+  ];
+  if (values.some((value) => !Number.isFinite(value))) return null;
+
+  const workBottom = workArea.y + workArea.height;
+  const aboveY = stripPosition.y - growHeight;
+  const cardAbove = aboveY >= workArea.y;
+  if (!cardAbove && stripPosition.y + stripSize.height + growHeight > workBottom) return null;
+  const y = cardAbove ? aboveY : stripPosition.y;
+  const cardTop = cardAbove ? anchorTop : anchorBottom + gap;
+  return { side: cardAbove ? "above" : "below", y, cardTop, cardLeft: 0 };
+}
+
 /// 记忆坐标是物理像素；用每台显示器自己的 DPI 推导候选窗口大小，再选与工作区
 /// 重叠最多的显示器。不能先读当前窗口 DPI——窗口随后可能恢复到另一台屏幕。
 function monitorForWindowPosition(
@@ -250,6 +289,7 @@ export {
   desyncHealRetryDelayMs,
   floatingViewportSize,
   horizontalStripTargetWidth,
+  horizontalTasksHoverLayout,
   isDockAnchorPosition,
   isStableFloatingMode,
   monitorForWindowPosition,
