@@ -15,10 +15,14 @@
 //!   远程（VPS）连接需在网关侧 `openclaw devices approve` 一次；
 //! - `tasks.list` 需要 `operator.read`；返回 `{tasks:[...]}`；
 //!   `tasks.get` 参数是 `taskId`（不是文档 CLI 篇的 lookup）；
+//! - `chat.history` 需要 `operator.admin`（2026-10-03 实测：会话消息流，Control UI
+//!   同款接口）——会话工作台账用它取"群聊派活原话"当标题；设备对 admin 自动获准；
 //! - 无 tasks.flow RPC；TaskFlow 编排状态不在本连接器范围（CLI 专用）。
 //!
-//! 隐私边界：账本只存任务元数据（id / 标题 / 状态 / 时间 / 会话键），
+//! 隐私边界：任务账本只存任务元数据（id / 标题 / 状态 / 时间 / 会话键），
 //! 不存 prompt、回复正文、工具输出与凭据；token 与设备私钥只在内存使用。
+//! 会话工作台账（session_run）按用户明确要求存"派活原话"前 200 字作标题、
+//! 最近一次工具调用名作进度——仅本地落盘，永不上传；完整正文与工具输出仍不落。
 
 use anyhow::{anyhow, bail, Context, Result};
 use rusqlite::params_from_iter;
@@ -298,7 +302,10 @@ impl GatewayClient {
         // 1) 等待 connect.challenge，取 nonce
         let nonce = Self::wait_challenge(&mut socket, start)?;
         let signed_at_ms = chrono::Utc::now().timestamp_millis();
-        let scopes = ["operator.read"];
+        // admin 会话：chat.history（会话工作台账的标题/进度源）需要 operator.admin。
+        // 网关按设备授权取交集；仅授 read 时本握手仍成功，chat.history 调用会
+        // FORBIDDEN → record_session_runs 静默降级（标题空，前端显示兜底标签）。
+        let scopes = ["operator.read", "operator.admin"];
         let signature = sign_payload_v3(
             identity,
             &SignContext {
@@ -575,13 +582,20 @@ pub struct SessionUsage {
     pub runtime_ms: Option<i64>,
     pub updated_at: Option<i64>,
     pub subject: Option<String>,
+    /// 最近一次 run 的错误原话（会话 status=failed 时携带；台账失败行透传）。
+    pub last_run_error: Option<String>,
 }
 
 /// 拉 Agent 活动快照。
 /// 主数据源 = sessions.list（实测返回每个会话的 key/status/hasActiveRun/
 /// updatedAt/tokens，key 形如 agent:<agentId>[:subagent:<uuid>]）；辅以
 /// agents.list 补全 Agent 显示名。会话按 agentId 前缀归集成各 Agent 活动卡。
-pub fn fetch_agents_snapshot(target: &GatewayTarget) -> Result<AgentsSnapshot> {
+/// 传入 connection 时顺带把会话 run 增量记入本地台账（群聊派活的数据源）；
+/// connection 传 None 仅拉快照（测试/无账本场景）。
+pub fn fetch_agents_snapshot(
+    target: &GatewayTarget,
+    connection: Option<&Connection>,
+) -> Result<AgentsSnapshot> {
     let identity_dir = match &target.identity_dir {
         Some(dir) => dir.clone(),
         None => default_state_dir(),
@@ -697,8 +711,18 @@ pub fn fetch_agents_snapshot(target: &GatewayTarget) -> Result<AgentsSnapshot> {
                     .get("subject")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
+                last_run_error: session
+                    .get("lastRunError")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
             });
         }
+    }
+
+    // 会话工作台账：群聊派活等会话 run 增量落本地（详见 record_session_runs）。
+    // 记账失败不拖垮快照——台账缺失只影响任务面板的会话行，不影响用量链路。
+    if let Some(connection) = connection {
+        let _ = record_session_runs(connection, &target.label, &session_usages, Some(&mut client));
     }
 
     Ok(AgentsSnapshot {
@@ -1006,6 +1030,308 @@ pub fn list_tasks(
     Ok(out)
 }
 
+// ---------------------------------------------------------------------------
+// 会话工作台账（群聊派活等会话 run 的结构化记录）
+// ---------------------------------------------------------------------------
+
+/// tasks.list 只登记 automation_run（cron）与 exec（CLI）两类任务；北斗矩阵群
+/// 里 @星位派活 = 群会话 run，网关不生成 task 条目（2026-10-03 实测）。本表把
+/// sessions.list 观察到的会话 run 增量落成台账：标题 = chat.history 最近一条
+/// user 消息原话（用户明确批准；仅前 200 字，仅本地落盘），进度 = 最近一次
+/// 工具调用名，成败/时长 = 会话字段。保留期对齐任务账本口径：7 天自动清理。
+const SESSION_RUN_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+/// 从未观测到"运行中"的 run（两拍之间开始并结束的短 run）：结束时间在此窗口
+/// 内的终态会话按漏采补记一行，同一结束时间戳只补一次。
+const SESSION_RUN_MISSED_WINDOW_MS: i64 = 60 * 60 * 1000;
+
+fn ensure_session_run_table(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS session_run (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            gateway       TEXT NOT NULL,
+            session_key   TEXT NOT NULL,
+            agent_id      TEXT,
+            run_id        TEXT,
+            title         TEXT,
+            status        TEXT,
+            error         TEXT,
+            progress_summary TEXT,
+            model         TEXT,
+            started_at_ms INTEGER,
+            ended_at_ms   INTEGER,
+            first_seen_ms INTEGER NOT NULL,
+            last_seen_ms  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_run_time
+            ON session_run(gateway, first_seen_ms);",
+    )?;
+    Ok(())
+}
+
+/// 会话 run 状态 → 账本状态。sessions.list 的 status：running/done/failed
+/// （空闲会话为 null）；终态落 done / failed，失败带 lastRunError 原话。
+fn session_run_terminal_status(session: &SessionUsage) -> (&'static str, Option<String>) {
+    if session.status.as_deref() == Some("failed") {
+        ("failed", session.last_run_error.clone())
+    } else {
+        ("done", None)
+    }
+}
+
+/// 把快照里的会话 run 增量记入本地台账：
+/// - hasActiveRun=true 且无开放行 → 新记一行"running"（started 取会话字段，缺省现在）；
+/// - hasActiveRun=true 且已有开放行 → 刷新 last_seen / 标题 / 进度；
+/// - hasActiveRun=false 且有开放行 → 落终态（failed 带错误原话；终态保护：
+///   UPDATE 带 status='running' 条件，已关闭的行不被回写）；
+/// - hasActiveRun=false 且从没见过开放行、但 endedAt 在漏采窗口内 → 按终态补记
+///   （两拍之间开始并结束的短 run），同一 (session_key, ended_at) 只补一次。
+/// chat.history 取标题/进度失败时静默降级——台账行仍在，只是标题空。
+/// 返回本次写入（含新增与关闭）的行数。
+pub fn record_session_runs(
+    connection: &Connection,
+    target_label: &str,
+    sessions: &[SessionUsage],
+    mut client: Option<&mut GatewayClient>,
+) -> Result<usize> {
+    ensure_session_run_table(connection)?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let _ = connection.execute(
+        "DELETE FROM session_run WHERE first_seen_ms < ?1",
+        rusqlite::params![now - SESSION_RUN_RETENTION_MS],
+    );
+    let mut written = 0usize;
+    for session in sessions {
+        if session.key.is_empty() {
+            continue;
+        }
+        let open: Option<i64> = connection
+            .query_row(
+                "SELECT id FROM session_run \
+                 WHERE gateway = ?1 AND session_key = ?2 AND status = 'running' \
+                 ORDER BY id DESC LIMIT 1",
+                rusqlite::params![target_label, session.key],
+                |row| row.get(0),
+            )
+            .ok();
+        if session.has_active_run {
+            let run_row = match open {
+                Some(id) => id,
+                None => {
+                    connection.execute(
+                        "INSERT INTO session_run (gateway, session_key, agent_id, status, \
+                         model, started_at_ms, first_seen_ms, last_seen_ms) \
+                         VALUES (?1,?2,?3,'running',?4,?5,?6,?6)",
+                        rusqlite::params![
+                            target_label,
+                            session.key,
+                            session.agent_id,
+                            session.model,
+                            session.started_at.unwrap_or(now),
+                            now
+                        ],
+                    )?;
+                    written += 1;
+                    connection.last_insert_rowid()
+                }
+            };
+            // 标题/进度：chat.history（admin 会话）。降级路径：FORBIDDEN/超时/断流
+            // 都静默跳过——台账行保留，标题留空由前端显示兜底。
+            if let Some(client) = client.as_deref_mut() {
+                if let Ok(payload) = client.call(
+                    "chat.history",
+                    json!({"sessionKey": session.key, "limit": 12}),
+                ) {
+                    let title = extract_dispatch_title(&payload);
+                    let progress = extract_last_tool_progress(&payload);
+                    if title.is_some() || progress.is_some() {
+                        let _ = connection.execute(
+                            "UPDATE session_run SET title = COALESCE(title, ?2), \
+                             progress_summary = COALESCE(?3, progress_summary) WHERE id = ?1",
+                            rusqlite::params![run_row, title, progress],
+                        );
+                    }
+                }
+            }
+            let _ = connection.execute(
+                "UPDATE session_run SET last_seen_ms = ?2 WHERE id = ?1",
+                rusqlite::params![run_row, now],
+            );
+        } else if let Some(id) = open {
+            let (status, error) = session_run_terminal_status(session);
+            connection.execute(
+                "UPDATE session_run SET status = ?2, error = ?3, \
+                 ended_at_ms = COALESCE(?4, ?5), last_seen_ms = ?5 \
+                 WHERE id = ?1 AND status = 'running'",
+                rusqlite::params![id, status, error, session.ended_at, now],
+            )?;
+            written += 1;
+        } else if let Some(ended) = session.ended_at {
+            // 漏采补记：短 run 在两拍之间结束，从没被观测为 running。
+            if now - ended > SESSION_RUN_MISSED_WINDOW_MS {
+                continue;
+            }
+            let exists: bool = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM session_run \
+                     WHERE gateway = ?1 AND session_key = ?2 AND COALESCE(ended_at_ms, 0) = ?3",
+                    rusqlite::params![target_label, session.key, ended],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count > 0)
+                .unwrap_or(true);
+            if exists {
+                continue;
+            }
+            let (status, error) = session_run_terminal_status(session);
+            connection.execute(
+                "INSERT INTO session_run (gateway, session_key, agent_id, status, error, \
+                 model, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)",
+                rusqlite::params![
+                    target_label,
+                    session.key,
+                    session.agent_id,
+                    status,
+                    error,
+                    session.model,
+                    session.started_at.unwrap_or(ended),
+                    ended,
+                    now
+                ],
+            )?;
+            written += 1;
+        }
+    }
+    Ok(written)
+}
+
+/// chat.history 的 content 可能是纯字符串或分段数组（[{text:...}, ...]）。
+fn session_content_text(content: Option<&Value>) -> Option<String> {
+    match content? {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(items) => {
+            let mut out = String::new();
+            for item in items {
+                match item {
+                    Value::String(text) => out.push_str(text),
+                    Value::Object(part) => {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            out.push_str(text);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// 派活消息常带 [System: ...] 前缀段（mention 展开说明等），剥掉再当标题。
+fn trim_system_prefix(text: &str) -> &str {
+    let mut current = text.trim();
+    while let Some(rest) = current.strip_prefix("[System:") {
+        match rest.find(']') {
+            Some(close) => current = rest[close + 1..].trim(),
+            None => break,
+        }
+    }
+    current
+}
+
+/// 标题 = 最近一条 user 消息的原话（剥 System 前缀，截 200 字）。
+fn extract_dispatch_title(payload: &Value) -> Option<String> {
+    let messages = payload.get("messages")?.as_array()?;
+    for message in messages.iter().rev() {
+        if message.get("role").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        let raw = session_content_text(message.get("content"))?;
+        let text = trim_system_prefix(&raw);
+        if text.is_empty() {
+            continue;
+        }
+        let mut out: String = text.chars().take(200).collect();
+        if text.chars().count() > 200 {
+            out.push('…');
+        }
+        return Some(out);
+    }
+    None
+}
+
+/// 进度 = 最近一次工具调用的名字（toolResult / toolCall）。只取名，不取输出。
+fn extract_last_tool_progress(payload: &Value) -> Option<String> {
+    let messages = payload.get("messages")?.as_array()?;
+    for message in messages.iter().rev() {
+        let role = message.get("role").and_then(Value::as_str);
+        if role == Some("toolResult") || role == Some("toolCall") {
+            if let Some(name) = message.get("toolName").and_then(Value::as_str) {
+                return Some(name.to_owned());
+            }
+        }
+    }
+    None
+}
+
+/// 会话工作台账的查询行（serde 序列化后直接给前端）。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRunRow {
+    pub id: i64,
+    pub gateway: String,
+    pub session_key: String,
+    pub agent_id: Option<String>,
+    pub run_id: Option<String>,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub error: Option<String>,
+    pub progress_summary: Option<String>,
+    pub model: Option<String>,
+    pub started_at_ms: Option<i64>,
+    pub ended_at_ms: Option<i64>,
+    pub first_seen_ms: i64,
+    pub last_seen_ms: i64,
+}
+
+/// 读会话工作台账：按结束/最近活动倒序。前端自行过滤活跃与近期失败。
+pub fn list_session_runs(
+    connection: &Connection,
+    limit: Option<u32>,
+) -> Result<Vec<SessionRunRow>> {
+    ensure_session_run_table(connection)?;
+    let limit = limit.unwrap_or(300).min(2000);
+    let sql = format!(
+        "SELECT id, gateway, session_key, agent_id, run_id, title, status, error, \
+         progress_summary, model, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms \
+         FROM session_run \
+         ORDER BY COALESCE(ended_at_ms, last_seen_ms) DESC LIMIT {limit}"
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let mut rows = statement.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(SessionRunRow {
+            id: row.get(0)?,
+            gateway: row.get(1)?,
+            session_key: row.get(2)?,
+            agent_id: row.get(3)?,
+            run_id: row.get(4)?,
+            title: row.get(5)?,
+            status: row.get(6)?,
+            error: row.get(7)?,
+            progress_summary: row.get(8)?,
+            model: row.get(9)?,
+            started_at_ms: row.get(10)?,
+            ended_at_ms: row.get(11)?,
+            first_seen_ms: row.get(12)?,
+            last_seen_ms: row.get(13)?,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1174,5 +1500,122 @@ mod tests {
         // deviceId 形态：Ed25519 公钥 32 字节 → 恰好 43 字符。
         let pk = [7u8; 32];
         assert_eq!(base64url(&pk).len(), 43);
+    }
+
+    fn session_run_fixture(
+        key: &str,
+        active: bool,
+        status: Option<&str>,
+        started: Option<i64>,
+        ended: Option<i64>,
+        error: Option<&str>,
+    ) -> SessionUsage {
+        SessionUsage {
+            key: key.to_owned(),
+            gateway: "vps".to_owned(),
+            agent_id: Some(key.split(':').nth(1).unwrap_or("agent").to_owned()),
+            has_active_run: active,
+            status: status.map(str::to_owned),
+            started_at: started,
+            ended_at: ended,
+            last_run_error: error.map(str::to_owned),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn session_run_records_open_then_close_with_terminal_protection() {
+        let connection = memory_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        let started = now - 60_000;
+        let key = "agent:tianshu:feishu:group:oc_1";
+        // 第一拍：天枢群会话在跑 → 记一行 running
+        let running = vec![session_run_fixture(
+            key,
+            true,
+            Some("running"),
+            Some(started),
+            None,
+            None,
+        )];
+        assert_eq!(record_session_runs(&connection, "vps", &running, None).unwrap(), 1);
+        let runs = list_session_runs(&connection, None).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status.as_deref(), Some("running"));
+        assert_eq!(runs[0].started_at_ms, Some(started));
+        // 第二拍：还在跑 → 不新增
+        assert_eq!(record_session_runs(&connection, "vps", &running, None).unwrap(), 0);
+        assert_eq!(list_session_runs(&connection, None).unwrap().len(), 1);
+        // 第三拍：结束且 failed → 落终态带错误原话；再拍不回写
+        let closed = vec![session_run_fixture(
+            key,
+            false,
+            Some("failed"),
+            Some(started),
+            Some(now - 30_000),
+            Some("provider 502"),
+        )];
+        assert_eq!(record_session_runs(&connection, "vps", &closed, None).unwrap(), 1);
+        let runs = list_session_runs(&connection, None).unwrap();
+        assert_eq!(runs[0].status.as_deref(), Some("failed"));
+        assert_eq!(runs[0].error.as_deref(), Some("provider 502"));
+        assert_eq!(runs[0].ended_at_ms, Some(now - 30_000));
+        assert_eq!(record_session_runs(&connection, "vps", &closed, None).unwrap(), 0);
+    }
+
+    #[test]
+    fn session_run_backfills_missed_short_runs_once() {
+        let connection = memory_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        // 短 run 在两拍之间开始并结束：hasActiveRun=false + ended 在漏采窗口内
+        let missed = vec![session_run_fixture(
+            "agent:tianxuan:feishu:group:oc_1",
+            false,
+            Some("done"),
+            Some(now - 90_000),
+            Some(now - 20_000),
+            None,
+        )];
+        assert_eq!(record_session_runs(&connection, "vps", &missed, None).unwrap(), 1);
+        // 同一结束时间戳重复观测 → 不重复补
+        assert_eq!(record_session_runs(&connection, "vps", &missed, None).unwrap(), 0);
+        assert_eq!(list_session_runs(&connection, None).unwrap().len(), 1);
+        // 漏采窗口外（>1h）的老终态不补
+        let old = vec![session_run_fixture(
+            "agent:tianji:main",
+            false,
+            Some("done"),
+            Some(now - 3 * 3_600_000),
+            Some(now - 2 * 3_600_000),
+            None,
+        )];
+        assert_eq!(record_session_runs(&connection, "vps", &old, None).unwrap(), 0);
+    }
+
+    #[test]
+    fn session_run_retention_deletes_after_seven_days() {
+        let connection = memory_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        let stale_ms = now - 8 * 24 * 3_600_000;
+        // 漏采窗口外的老终态不会自动入账；手工插一条 8 天前的旧账验证清理
+        connection
+            .execute(
+                "INSERT INTO session_run (gateway, session_key, status, first_seen_ms, last_seen_ms) \
+                 VALUES ('vps','agent:tianshu:main','done',?1,?1)",
+                rusqlite::params![stale_ms],
+            )
+            .unwrap();
+        let fresh = vec![session_run_fixture(
+            "agent:tianshu:feishu:group:oc_2",
+            true,
+            Some("running"),
+            Some(now),
+            None,
+            None,
+        )];
+        record_session_runs(&connection, "vps", &fresh, None).unwrap();
+        let runs = list_session_runs(&connection, None).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status.as_deref(), Some("running"));
     }
 }

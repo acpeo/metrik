@@ -10,6 +10,8 @@ import {
   hopToneOf,
   isActiveTask,
   selectUsageSessions,
+  sessionEpisodeHops,
+  sessionRunHopStatus,
 } from "./taskChains.js";
 
 const task = (overrides) => ({
@@ -157,4 +159,45 @@ test("isActiveTask: running/queued 算活跃，其余与缺状态不算", () => 
   assert.equal(isActiveTask({ status: "succeeded" }), false);
   assert.equal(isActiveTask({}), false);
   assert.equal(isActiveTask(null), false);
+});
+
+test("sessionRunHopStatus: done→succeeded、failed→failed、running 保持", () => {
+  assert.equal(sessionRunHopStatus("done"), "succeeded");
+  assert.equal(sessionRunHopStatus("succeeded"), "succeeded");
+  assert.equal(sessionRunHopStatus("failed"), "failed");
+  assert.equal(sessionRunHopStatus("timed_out"), "failed");
+  assert.equal(sessionRunHopStatus("running"), "running");
+  assert.equal(sessionRunHopStatus(null), "running");
+});
+
+test("sessionEpisodeHops: 同群聊邻近 run 组成序列，跨群/窗外不入列", () => {
+  const now = Date.now();
+  const runs = [
+    { id: 1, sessionKey: "agent:tianxuan:feishu:group:oc_a", agentId: "tianxuan", status: "failed", startedAtMs: now - 500_000, endedAtMs: now - 370_000, title: "首轮" },
+    { id: 2, sessionKey: "agent:tianshu:feishu:group:oc_a", agentId: "tianshu", status: "running", startedAtMs: now - 230_000, title: "补发" },
+    { id: 3, sessionKey: "agent:tianji:feishu:group:oc_b", agentId: "tianji", status: "running", startedAtMs: now - 100_000, title: "别的群" },
+    { id: 4, sessionKey: "agent:tianshu:main", agentId: "tianshu", status: "done", startedAtMs: now - 300_000, endedAtMs: now - 290_000, title: "主会话" },
+  ];
+  const focus = { sessionKey: "agent:tianshu:feishu:group:oc_a", startedAtMs: now - 230_000 };
+  const hops = sessionEpisodeHops(runs, focus);
+  // 同群（oc_a）的两拍：天璇失败 → 天枢运行中；跨群 oc_b 与主会话不入列
+  assert.equal(hops.length, 2);
+  assert.equal(hops[0].taskId, "session-run:1");
+  assert.equal(hops[0].status, "failed");
+  assert.equal(hops[1].taskId, "session-run:2");
+  assert.equal(hops[1].status, "running");
+  assert.equal(hops[1].title, "补发");
+  // 窗口外（>30 分钟）的邻近 run 不入列
+  const far = [...runs, { id: 5, sessionKey: "agent:tianxuan:feishu:group:oc_a", agentId: "tianxuan", status: "done", startedAtMs: now - 3 * 3_600_000, endedAtMs: now - 2.9 * 3_600_000 }];
+  assert.equal(sessionEpisodeHops(far, focus).length, 2);
+  // 序列上限 6 跳
+  const many = Array.from({ length: 10 }, (_, index) => ({
+    id: 100 + index,
+    sessionKey: "agent:tianshu:feishu:group:oc_a",
+    agentId: "tianshu",
+    status: "done",
+    startedAtMs: now - (600 - index) * 60_000,
+    endedAtMs: now - (599 - index) * 60_000,
+  }));
+  assert.equal(sessionEpisodeHops(many, many[9]).length, 6);
 });

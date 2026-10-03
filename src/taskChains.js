@@ -122,3 +122,45 @@ export function hopGlyphOf(tone) {
 export function isActiveTask(task) {
   return task?.status === "running" || task?.status === "queued";
 }
+
+/// 会话 run 状态 → hop 状态语义（hopToneOf 的口径）：done→succeeded / failed→failed，
+/// running 保持 running（当前跳脉冲）。
+export function sessionRunHopStatus(status) {
+  if (status === "done" || status === "succeeded") return "succeeded";
+  if (status === "failed" || status === "timed_out" || status === "lost") return "failed";
+  return "running";
+}
+
+/// 同一轮派活的 run 序列（迷你竖条胶卷）：群聊接力没有跨星 runId，不硬造任务链——
+/// 这里取的是同一群聊（chat id 相同）在当前 run 开始前 30 分钟内的邻近 run +
+/// 当前 run，按开始时间排序，每格都是真实发生的会话 run（Leo 拍板的形态）。
+/// runs = 会话工作台账行（camelCase，来自 session_run_list）；focus = 当前行。
+export function sessionEpisodeHops(runs, focus) {
+  if (!focus) return [];
+  const chatIdOf = (key) => {
+    const text = key || "";
+    const marker = text.indexOf(":group:");
+    return marker >= 0 ? text.slice(marker + 1) : text;
+  };
+  const focusChat = chatIdOf(focus.sessionKey);
+  const focusStart = focus.startedAtMs ?? 0;
+  const WINDOW_MS = 30 * 60 * 1000;
+  const episode = (runs ?? [])
+    .filter((run) => {
+      if (!run || chatIdOf(run.sessionKey) !== focusChat) return false;
+      const start = run.startedAtMs ?? 0;
+      return start <= focusStart + 60_000 && focusStart - start <= WINDOW_MS;
+    })
+    .sort((a, b) => (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0))
+    .slice(-6);
+  return episode.map((run) => ({
+    taskId: `session-run:${run.id ?? run.runId ?? run.sessionKey}`,
+    agentId: run.agentId,
+    status: sessionRunHopStatus(run.status),
+    title: run.title ?? "",
+    progressSummary: run.progressSummary ?? null,
+    startedAtMs: run.startedAtMs ?? 0,
+    endedAtMs: run.endedAtMs ?? null,
+    error: run.error ?? null,
+  }));
+}

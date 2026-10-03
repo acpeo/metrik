@@ -52,8 +52,8 @@ import qwenAppIcon from "./assets/qwen-app-icon.png";
 import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
-import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
-import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions } from "./taskChains.js";
+import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, loadSessionRuns, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
+import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions, sessionEpisodeHops } from "./taskChains.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow, isBalanceWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -1826,6 +1826,7 @@ function StripBar({
 function useWidgetTasksFeed(gateways, enabled) {
   const [tasks, setTasks] = useState(null);
   const [agents, setAgents] = useState(null);
+  const [sessionRuns, setSessionRuns] = useState([]);
   const [live, setLive] = useState(false);
   const [lastSync, setLastSync] = useState(0);
   const [intervalSec, setIntervalSec] = useState(() => loadMonitorConfig().refreshIntervalSec);
@@ -1866,6 +1867,11 @@ function useWidgetTasksFeed(gateways, enabled) {
           if (alive) setAgents(snap);
         })
         .catch(() => {});
+      loadSessionRuns()
+        .then((data) => {
+          if (alive) setSessionRuns(data.runs ?? []);
+        })
+        .catch(() => {});
     };
     tick();
     const timer = setInterval(tick, Math.max(1, intervalSec) * 1000);
@@ -1879,6 +1885,7 @@ function useWidgetTasksFeed(gateways, enabled) {
   return {
     tasks,
     agents,
+    sessionRuns,
     live,
     lastSync,
     // 底栏强制刷新按钮：立即补一拍（并重启节流计时器，与改刷新间隔同一语义）。
@@ -2081,6 +2088,15 @@ function TasksWidgetWindow({
     () => selectUsageSessions(feed.agents?.sessions),
     [feed.agents],
   );
+  // 会话工作台账（session_run 表）：群聊派活等会话 run。活跃 + 近 24h 失败，
+  // 与任务行同一口径；排序键 = 最近活动。
+  const sessionRuns = feed.sessionRuns ?? [];
+  const activeRuns = sessionRuns.filter((run) => run.status === "running");
+  const failedRuns = sessionRuns.filter(
+    (run) => run.status === "failed" && now - (run.endedAtMs ?? run.lastSeenMs ?? 0) < recentWindowMs,
+  );
+  const taskStartedAt = (task) => task.startedAtMs ?? task.firstSeenMs ?? 0;
+  const sessionActivityAt = (run) => run.endedAtMs ?? run.startedAtMs ?? run.lastSeenMs ?? 0;
   const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
   const shellAppearance = glassShellAppearance("widget", {
     transparent,
@@ -2105,31 +2121,50 @@ function TasksWidgetWindow({
   // 折叠态 = 迷你任务列表：一行一个任务（状态点 + 标题 + 已跑时长）。
   // 折叠时要一眼看到的是"哪些活儿在跑、跑了多久、谁挂了"——42px 窄条装不下
   // 任何可读信息（字牌/计数都被用户否了），任务标题才是自解释的。
-  // 运行中在前（卡住的红点），近 24h 失败的跟在后面（红点）。
-  const miniRowsAll = (() => {
-    const rows = active.map((task) => ({ task, tone: "running" }));
-    for (const task of recentlyEnded) {
-      if (task.status === "failed" || task.status === "timed_out" || task.status === "lost") {
-        rows.push({ task, tone: "failed" });
-      }
-    }
-    return rows;
-  })();
+  // 两类工作同一行集：登记任务（task）+ 会话工作（session，群聊派活，见会话台账）；
+  // 活跃在前，近 24h 失败跟后，按最近活动排序取前 5 行。
+  const miniRowsAll = [
+    ...active.map((task) => ({ kind: "task", task, tone: "running", at: taskStartedAt(task) })),
+    ...activeRuns.map((run) => ({ kind: "session", run, tone: "running", at: run.startedAtMs ?? 0 })),
+    ...recentlyEnded
+      .filter((task) => task.status === "failed" || task.status === "timed_out" || task.status === "lost")
+      .map((task) => ({ kind: "task", task, tone: "failed", at: taskEndedAt(task) })),
+    ...failedRuns.map((run) => ({ kind: "session", run, tone: "failed", at: sessionActivityAt(run) })),
+  ].sort((a, b) => b.at - a.at);
   const miniRows = miniRowsAll.slice(0, 5);
-  // "其余任务" = 首行链路之外的行：链上的跳本身就是任务，已上屏的跳不算
-  // （否则竖条角标把胶卷里看得见的跳也数进去，等于修一个谎再造一个）。
-  // 横条 +N、竖条 +N 角标、悬停卡"其他进行中"节共用这一份（审计发现 1/2）。
-  const shownHopKeys = (() => {
-    const first = miniRows[0]?.task;
+  // 行的唯一键（shownKeys / otherRows / +N 计数共用）。
+  const miniRowKey = (row) =>
+    row.kind === "session"
+      ? `session-run:${row.run.id ?? row.run.sessionKey}`
+      : `${row.task.gateway ?? ""}:${row.task.taskId}`;
+  // "其余工作" = 首行已上屏部分之外的行：登记任务的链上跳、会话工作的同轮
+  // run 序列都已上屏，不算"其余"（否则角标把看得见的也数进去=新的谎）。
+  // 横条 +N、竖条 +N 角标、悬停卡"其他任务"节共用这一份。
+  const shownWorkKeys = (() => {
+    const first = miniRows[0];
     if (!first) return new Set();
+    if (first.kind === "session") {
+      return new Set(sessionEpisodeHops(sessionRuns, first.run).map((hop) => hop.taskId));
+    }
     return new Set(
-      chainHopsFor(first, chainIndex).map((hop) => `${hop.gateway ?? ""}:${hop.taskId}`),
+      chainHopsFor(first.task, chainIndex).map((hop) => `${hop.gateway ?? ""}:${hop.taskId}`),
     );
   })();
-  const otherRows = miniRowsAll.filter(
-    (row) => !shownHopKeys.has(`${row.task.gateway ?? ""}:${row.task.taskId}`),
-  );
+  const otherRows = miniRowsAll.filter((row) => !shownWorkKeys.has(miniRowKey(row)));
   const otherRowsFailed = otherRows.some((row) => row.tone === "failed");
+  // 竖条胶卷的跳集：登记任务 = 任务链；会话工作 = 同轮派活的真实 run 序列。
+  const miniVerticalHops = (() => {
+    const first = miniRows[0];
+    if (!first) return [];
+    return first.kind === "session"
+      ? sessionEpisodeHops(sessionRuns, first.run)
+      : chainHopsFor(first.task, chainIndex);
+  })();
+  const miniCurrentHopId = miniRows[0]
+    ? miniRows[0].kind === "session"
+      ? `session-run:${miniRows[0].run.id ?? miniRows[0].run.sessionKey}`
+      : miniRows[0].task.taskId
+    : null;
   // 窗口尺寸：横条=跑马灯 244×36；竖条=计数格三格固定（44px/格，不随数据伸缩，
   // 与原小组件"行集合格子不藏"同一哲学：窗口高度不跳）。
   // 横竖统一长度（用户指定：竖 196 偏短、横 260 偏长 → 取 224）；
@@ -2190,7 +2225,30 @@ function TasksWidgetWindow({
       setMiniControlsOpen(false);
       runWindowAction(() => resizeCurrentWindow(320, 384));
     };
-    const renderMiniRow = ({ task, tone, withChain = false, onHopHover }) => {
+    const renderMiniRow = ({ kind = "task", task, run, tone, withChain = false, onHopHover }) => {
+      // 会话工作行：状态点 + 星名 + 派活原话（无链；横条不做逐跳悬停卡，原生
+      // title 承载，展开窗里有完整信息）
+      if (kind === "session") {
+        const agentName = agentDisplayName(agentNameMap, run.agentId);
+        const title = run.title || "会话工作";
+        const failed = tone === "failed";
+        return (
+          <button
+            key={`session-run:${run.id ?? run.sessionKey}`}
+            type="button"
+            className={`tasks-mini-row${failed ? " tasks-mini-row--failed" : ""}`}
+            onClick={expand}
+            title={`${agentName ? `${agentName} · ` : ""}${title}${failed && run.error ? `（${run.error}）` : ""} · 点击展开`}
+          >
+            <i
+              className={`tasks-mini-dot ${failed ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
+              aria-hidden="true"
+            />
+            {agentName && <span className="tasks-mini-agent">{agentName}</span>}
+            <span className="tasks-mini-title">{title}</span>
+          </button>
+        );
+      }
       const title = task.title || task.taskId;
       const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
       // 星名归属：跑马灯一行 = 谁在干 + 干什么；有链时链优先（用户拍板：关联的是链路）
@@ -2244,9 +2302,10 @@ function TasksWidgetWindow({
         </button>
       );
     };
-    // 悬停卡实时化（发现 6）：拉新数据落地后按 taskId 在最新链里找回该跳，
-    // 卡片跟着刷新，不再定格在打开瞬间的快照；任务刚好结束则退回快照兜底。
-    const hoverHops = miniRows.length > 0 ? chainHopsFor(miniRows[0].task, chainIndex) : [];
+    // 悬停卡实时化（发现 6）：拉新数据落地后按 taskId 在最新跳集里找回该跳，
+    // 卡片跟着刷新，不再定格在打开瞬间的快照；跳刚好消失则退回快照兜底。
+    // 跳集与竖条胶卷同一份（任务链或会话 run 序列）。
+    const hoverHops = miniVerticalHops;
     let cardHop = hoverCard?.hop ?? null;
     let cardIndex = hoverCard?.index ?? 0;
     let cardTotal = hoverCard?.total ?? 0;
@@ -2301,8 +2360,8 @@ function TasksWidgetWindow({
                 >
                   <ChainFilmstrip
                     vertical
-                    hops={chainHopsFor(miniRows[0].task, chainIndex)}
-                    currentTaskId={miniRows[0].task.taskId}
+                    hops={miniVerticalHops}
+                    currentTaskId={miniCurrentHopId}
                     agentNameMap={agentNameMap}
                     onExpand={expand}
                     onHopHover={showHopCard}
@@ -2313,11 +2372,18 @@ function TasksWidgetWindow({
                     type="button"
                     className={`tasks-mini-more--vertical${otherRowsFailed ? " tasks-mini-more--vertical--failed" : ""}`}
                     onClick={expand}
-                    aria-label={`还有 ${otherRows.length} 个任务，点击展开`}
-                    title={`还有 ${otherRows.length} 个任务：${otherRows
+                    aria-label={`还有 ${otherRows.length} 个工作，点击展开`}
+                    title={`还有 ${otherRows.length} 个工作：${otherRows
                       .map((row) => {
-                        const name = agentDisplayName(agentNameMap, row.task.agentId) || row.task.agentId || "?";
-                        return `${name}·${row.task.title || row.task.taskId}${row.tone === "failed" ? "（失败）" : ""}`;
+                        const name =
+                          row.kind === "session"
+                            ? agentDisplayName(agentNameMap, row.run.agentId) || row.run.agentId || "?"
+                            : agentDisplayName(agentNameMap, row.task.agentId) || row.task.agentId || "?";
+                        const text =
+                          row.kind === "session"
+                            ? row.run.title || "会话工作"
+                            : row.task.title || row.task.taskId;
+                        return `${name}·${text}${row.tone === "failed" ? "（失败）" : ""}`;
                       })
                       .join("；")}`}
                   >
@@ -2332,16 +2398,18 @@ function TasksWidgetWindow({
               </span>
             )
           ) : (
-            // 横条 = 跑马灯：只显示第一个任务（有链成胶卷，悬停出详情卡），
-            // 其余任务用 +N 提示——数字 = 首行链路之外的真实行数（发现 2，
-            // 5 行上限只作用于渲染，不再让计数说谎）
+            // 横条 = 跑马灯：只显示第一份工作（登记任务有链成胶卷、悬停出详情卡；
+            // 会话工作=普通行），其余用 +N 提示——数字 = 首行已上屏部分之外的真实
+            // 行数（两类工作合计，5 行上限只作用于渲染，不让计数说谎）
             <>
               {miniRows.length > 0 ? (
                 <div className="tasks-mini-ticker" onPointerLeave={hideHopCard}>
                   {renderMiniRow({ ...miniRows[0], withChain: true, onHopHover: showHopCard })}
-                  {otherRows.length > 0 && chainHopsFor(miniRows[0].task, chainIndex).length < 2 && (
-                    <span className="tasks-mini-more">+{otherRows.length}</span>
-                  )}
+                  {otherRows.length > 0 &&
+                    (miniRows[0].kind === "session" ||
+                      chainHopsFor(miniRows[0].task, chainIndex).length < 2) && (
+                      <span className="tasks-mini-more">+{otherRows.length}</span>
+                    )}
                 </div>
               ) : (
                 <span className="tasks-mini-empty">{feed.live ? "暂无运行中任务" : "未同步"}</span>
@@ -2359,7 +2427,7 @@ function TasksWidgetWindow({
                 total={cardTotal}
                 others={otherRows}
                 agentNameMap={agentNameMap}
-                currentTaskId={miniRows.length > 0 ? miniRows[0].task.taskId : null}
+                currentTaskId={miniCurrentHopId}
                 // 卡片跟随壳的有效墨色（与 glassShellAppearance 的 --glass-light
                 // 判定同一条规则）：浅色档、透明档+深色字（白霜）→ 浅色卡；
                 // 深色档、透明档+白字（深 scrim）→ 深色卡。卡片 Portal 在 body
@@ -2477,6 +2545,49 @@ function TasksWidgetWindow({
       </p>
     );
   };
+  // 会话工作行（群聊派活，session_run 台账）：标题=派活原话，行尾「会话」小标
+  // 与登记任务区分；附属信息行与登记任务的进度行同结构（失败=错误原话红字）。
+  const renderSessionRow = (run) => {
+    const failed = run.status === "failed";
+    const lastSeen = run.endedAtMs ?? run.lastSeenMs ?? 0;
+    return (
+      <div className="widget-task-row">
+        <i
+          className={`widget-task-accent ${failed ? "widget-task-accent--failed" : "widget-task-accent--running"}`}
+          aria-hidden="true"
+        />
+        <span className="widget-task-main">
+          <TaskStatusPill status={failed ? "failed" : "running"} />
+          <span className="widget-task-title" title={run.title || ""}>
+            {run.title || "会话工作"}
+          </span>
+          <span className="widget-session-flag">会话</span>
+        </span>
+        <small>{formatTaskDuration(run.startedAtMs, run.endedAtMs) || formatTaskAge(lastSeen)}</small>
+      </div>
+    );
+  };
+  const renderSessionSubLine = (run) => {
+    const failed = run.status === "failed";
+    const agentName = agentDisplayName(agentNameMap, run.agentId) || run.agentId || "";
+    if (failed) {
+      const text = run.error || "run 失败";
+      return (
+        <p className="task-progress-line task-progress-line--error" title={text}>
+          {agentName ? `${agentName} · ` : ""}
+          {text}
+        </p>
+      );
+    }
+    const text = run.progressSummary || "会话工作中";
+    return (
+      <p className="task-progress-line" title={text}>
+        {agentName ? `${agentName} · ` : ""}
+        <em>正在：</em>
+        {text}
+      </p>
+    );
+  };
   // 链内排队跳不再单独占行（竖直时间线里已经有了）——只收运行中任务链上的成员。
   const chainMemberIds = new Set();
   for (const task of active) {
@@ -2485,6 +2596,13 @@ function TasksWidgetWindow({
       if (hop.taskId !== task.taskId) chainMemberIds.add(hop.taskId);
     }
   }
+  // 展开窗面板 = 两类工作合并：活跃登记任务 + 活跃会话工作 + 近 24h 失败的
+  // 会话工作（登记任务的失败仍只在迷你行集里，展开窗口径不变）。按最近活动排序。
+  const panelRows = [
+    ...active.map((task) => ({ kind: "task", task, at: taskStartedAt(task) })),
+    ...activeRuns.map((run) => ({ kind: "session", run, at: run.startedAtMs ?? 0 })),
+    ...failedRuns.map((run) => ({ kind: "session", run, at: sessionActivityAt(run) })),
+  ].sort((a, b) => b.at - a.at);
   // 星位上下文收敛：全网关跑同一个模型时（北斗常态）模型名进卡头只说一次，
   // 行内不再重复；模型混跑时才逐行标注。
   const usageModelSet = new Set(
@@ -2574,13 +2692,23 @@ function TasksWidgetWindow({
       </header>
       <div className="tasks-window-content">
         <section className="widget-tasks tasks-window-body" aria-label="Gateway 任务">
-          {active.length === 0 && usageSessions.length === 0 && (
+          {panelRows.length === 0 && usageSessions.length === 0 && (
             <p className="widget-tasks-empty">
-              {tasks.length ? "暂无任务记录" : "等待首次同步…（主窗口 设置 → 任务追踪 配置 Gateway）"}
+              {tasks.length || sessionRuns.length ? "暂无任务记录" : "等待首次同步…（主窗口 设置 → 任务追踪 配置 Gateway）"}
             </p>
           )}
           <div className="tasks-card">
-            {active.map((task) => {
+            {panelRows.map((row) => {
+              if (row.kind === "session") {
+                const run = row.run;
+                return (
+                  <div className="widget-task-group" key={`session-run:${run.id}`}>
+                    {renderSessionRow(run)}
+                    {renderSessionSubLine(run)}
+                  </div>
+                );
+              }
+              const task = row.task;
               const hops = task.status === "running" ? chainHopsFor(task, chainIndex) : [];
               // 排队任务若是某条运行中链上的成员，时间线里已经有了，不再单独占行
               if (task.status === "queued" && chainMemberIds.has(task.taskId)) return null;
@@ -6078,16 +6206,26 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
               : `其他进行中 · ${(others ?? []).length}`}
           </span>
           {visibleOthers.map((row) => {
-            const rowName = agentDisplayName(agentNameMap, row.task.agentId) || row.task.agentId || "?";
-            const pending = row.task.status === "queued";
+            // 两类行统一口径：登记任务取 task 字段，会话工作取 run 字段
+            const isSession = row.kind === "session";
+            const agentId = isSession ? row.run.agentId : row.task.agentId;
+            const rowKey = isSession
+              ? `session-run:${row.run.id ?? row.run.sessionKey}`
+              : `${row.task.gateway ?? ""}:${row.task.taskId}`;
+            const text = isSession
+              ? row.run.title || "会话工作"
+              : row.task.title || row.task.taskId;
+            const rowName = agentDisplayName(agentNameMap, agentId) || agentId || "?";
+            const failed = row.tone === "failed";
+            const pending = !failed && (isSession ? false : row.task.status === "queued");
             return (
-              <span key={`${row.task.gateway ?? ""}:${row.task.taskId}`} className="tasks-hopcard-extra-row">
+              <span key={rowKey} className="tasks-hopcard-extra-row">
                 <i
-                  className={`tasks-hopcard-extra-dot${row.tone === "failed" ? " tasks-hopcard-extra-dot--failed" : pending ? " tasks-hopcard-extra-dot--pending" : ""}`}
+                  className={`tasks-hopcard-extra-dot${failed ? " tasks-hopcard-extra-dot--failed" : pending ? " tasks-hopcard-extra-dot--pending" : ""}`}
                   aria-hidden="true"
                 />
-                <span className={`tasks-hopcard-extra-title${row.tone === "failed" ? " tasks-hopcard-extra-title--failed" : ""}`}>
-                  {row.task.title || row.task.taskId}
+                <span className={`tasks-hopcard-extra-title${failed ? " tasks-hopcard-extra-title--failed" : ""}`}>
+                  {text}
                 </span>
                 <span className="tasks-hopcard-extra-agent">{rowName}</span>
               </span>

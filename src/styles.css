@@ -7384,6 +7384,35 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   opacity: 0.95;
 }
 
+/* 会话工作台账（session_run）的展开窗行：行尾「会话」小标 + 失败错误行 */
+.widget-session-flag {
+  flex: none;
+  margin-left: 2px;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: #9ecfb8;
+  background: rgba(158, 207, 184, 0.1);
+  border: 1px solid rgba(158, 207, 184, 0.24);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.widget-shell--glass-light .widget-session-flag {
+  color: #1f7a4d;
+  background: rgba(31, 122, 77, 0.08);
+  border-color: rgba(31, 122, 77, 0.24);
+}
+
+.task-progress-line--error {
+  color: #ff9c9c;
+  opacity: 0.9;
+}
+
+.widget-shell--glass-light .task-progress-line--error {
+  color: #b3372f;
+}
+
 /* 有链路的任务：行 + 链路同组，组底线替代行底线——链路在行与本组分隔线之间，
    不被任务行的底线隔在外面。压制规则要压过下面 glass-light/clear/ink 变体
    （同 (0,3,0) 会输给文件更靠后的变体），故挂到 .tasks-window-body 提到 (0,4,0)。 */

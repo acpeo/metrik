@@ -1807,6 +1807,20 @@ fn gateway_task_list(
         .map_err(|error| error.to_string())
 }
 
+/// 读本地会话工作台账（不联网）：群聊派活等会话 run 的结构化记录。
+/// 数据由 gateway_agents_snapshot 每拍顺带增量落账（record_session_runs），
+/// 保留 7 天自动清理，与任务账本口径对齐。
+#[tauri::command]
+fn session_run_list(
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<Vec<gateway_tasks::SessionRunRow>, String> {
+    let database_path = state.database_path.clone();
+    let connection =
+        storage::open_database_read_only(&database_path).map_err(|error| error.to_string())?;
+    gateway_tasks::list_session_runs(&connection, limit).map_err(|error| error.to_string())
+}
+
 /// 拉 Agent 会话活动快照（实时监控北斗等多 Agent 协作）：
 /// 数据源 = sessions.list（各星位会话 status/hasActiveRun/updatedAt）+ agents.list。
 /// 同时返回会话级用量明细（sessions，B 链路 token/上下文数据源）。
@@ -1835,8 +1849,8 @@ async fn gateway_agents_snapshot(
                 identity_dir: target.identity_dir.clone(),
             };
             // 复用任务快照的节流逻辑：agents 快照与任务快照共享同一网关连接
-            // 成本，这里独立节流窗口。
-            match gateway_tasks::fetch_agents_snapshot(&gw) {
+            // 成本，这里独立节流窗口。带连接 → 顺带把会话 run 记入本地台账。
+            match gateway_tasks::fetch_agents_snapshot(&gw, Some(&connection)) {
                 Ok(snapshot) => {
                     for mut agent in snapshot.agents {
                         agent.agent_id = format!("{}:{}", target.label, agent.agent_id);
@@ -1869,7 +1883,6 @@ async fn gateway_agents_snapshot(
                 Err(_) => { /* 单网关失败不阻塞其它网关 */ }
             }
         }
-        let _ = connection;
         Ok(GatewayAgentsPayload {
             agents: merged,
             sessions: merged_sessions,
@@ -2086,6 +2099,7 @@ pub fn run() {
             gateway_task_snapshot,
             gateway_task_list,
             gateway_agents_snapshot,
+            session_run_list,
             set_tasks_widget_window,
             show_main_expanded
         ])

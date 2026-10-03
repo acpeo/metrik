@@ -191,6 +191,69 @@ export async function refreshGatewayTasks(gateways) {
   }
 }
 
+/// 读会话工作台账：群聊派活等会话 run 的结构化记录（session_run 表）。
+/// 浏览器预览走演示数据（形态对齐 2026-10-03 真机探测：天枢跑着、天璇失败）。
+export async function loadSessionRuns() {
+  if (!isTauriRuntime()) {
+    const now = Date.now();
+    const min = 60_000;
+    return {
+      demo: true,
+      runs: [
+        {
+          id: 1,
+          gateway: "vps",
+          sessionKey: "agent:tianshu:feishu:group:oc_demo",
+          agentId: "tianshu",
+          status: "running",
+          title: "对比两份「天璇选pt研究-OpenAI智能体越权.md」，确认补发后的最终版",
+          progressSummary: "md5 对比两份同名文件",
+          model: "gpt-6",
+          startedAtMs: now - 5_000,
+          endedAtMs: null,
+          firstSeenMs: now - 5_000,
+          lastSeenMs: now - 2_000,
+        },
+        {
+          id: 2,
+          gateway: "vps",
+          sessionKey: "agent:tianxuan:feishu:group:oc_demo",
+          agentId: "tianxuan",
+          status: "failed",
+          title: "核对天璇产出落盘情况",
+          progressSummary: null,
+          model: "gpt-6",
+          error: "provider 502，未产出即回",
+          startedAtMs: now - 9 * min,
+          endedAtMs: now - 6 * min,
+          firstSeenMs: now - 9 * min,
+          lastSeenMs: now - 6 * min,
+        },
+        {
+          id: 3,
+          gateway: "vps",
+          sessionKey: "agent:tianxuan:feishu:group:oc_demo",
+          agentId: "tianxuan",
+          status: "done",
+          title: "收集近两年公告要点",
+          progressSummary: null,
+          model: "gpt-6",
+          startedAtMs: now - 60 * min,
+          endedAtMs: now - 58.5 * min,
+          firstSeenMs: now - 60 * min,
+          lastSeenMs: now - 58.5 * min,
+        },
+      ],
+    };
+  }
+  try {
+    const runs = await invoke("session_run_list", { limit: 300 });
+    return { demo: false, runs: Array.isArray(runs) ? runs : [] };
+  } catch (error) {
+    return { demo: false, runs: [], loadError: String(error) };
+  }
+}
+
 /// 设置存取：被追踪的 Gateway 列表（含 token）。token 只存本机 localStorage
 /// （与 Control UI 同级的安全边界；不上传、不进账本）。
 /// 读 Agent 会话活动快照（北斗等星位实时状态）：后端拉 sessions.list +
