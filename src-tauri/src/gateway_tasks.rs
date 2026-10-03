@@ -1804,7 +1804,10 @@ mod tests {
         let plain = json!({"messages": [
             {"role": "user", "content": "[System: intro] 帮我跑一遍\n\n[System: tail]"}
         ]});
-        assert_eq!(extract_dispatch_title(&plain).as_deref(), Some("帮我跑一遍"));
+        assert_eq!(
+            extract_dispatch_title(&plain).as_deref(),
+            Some("帮我跑一遍")
+        );
         // content 缺失的 user 消息跳过、继续往早找，不整单放弃
         let hole = json!({"messages": [
             {"role": "user", "content": null},
