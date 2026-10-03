@@ -1343,7 +1343,9 @@ mod tests {
     use super::*;
 
     fn memory_db() -> Connection {
-        Connection::open_in_memory().unwrap()
+        let connection = Connection::open_in_memory().unwrap();
+        ensure_session_run_table(&connection).unwrap();
+        connection
     }
 
     fn task(id: &str, status: &str, ended: Option<i64>) -> GatewayTask {
