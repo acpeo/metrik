@@ -1090,9 +1090,10 @@ fn session_run_terminal_status(session: &SessionUsage) -> (&'static str, Option<
 ///   UPDATE 带 status='running' 条件，已关闭的行不被回写）；
 /// - hasActiveRun=false 且从没见过开放行、但 endedAt 在漏采窗口内 → 按终态补记
 ///   （两拍之间开始并结束的短 run），同一 (session_key, ended_at) 只补一次。
+///
 /// chat.history 取标题/进度失败时静默降级——台账行仍在，只是标题空。
 /// 返回本次写入（含新增与关闭）的行数。
-pub fn record_session_runs(
+fn record_session_runs(
     connection: &Connection,
     target_label: &str,
     sessions: &[SessionUsage],
