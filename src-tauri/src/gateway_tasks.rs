@@ -722,7 +722,12 @@ pub fn fetch_agents_snapshot(
     // 会话工作台账：群聊派活等会话 run 增量落本地（详见 record_session_runs）。
     // 记账失败不拖垮快照——台账缺失只影响任务面板的会话行，不影响用量链路。
     if let Some(connection) = connection {
-        let _ = record_session_runs(connection, &target.label, &session_usages, Some(&mut client));
+        let _ = record_session_runs(
+            connection,
+            &target.label,
+            &session_usages,
+            Some(&mut client),
+        );
     }
 
     Ok(AgentsSnapshot {
@@ -1538,13 +1543,19 @@ mod tests {
             None,
             None,
         )];
-        assert_eq!(record_session_runs(&connection, "vps", &running, None).unwrap(), 1);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &running, None).unwrap(),
+            1
+        );
         let runs = list_session_runs(&connection, None).unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status.as_deref(), Some("running"));
         assert_eq!(runs[0].started_at_ms, Some(started));
         // 第二拍：还在跑 → 不新增
-        assert_eq!(record_session_runs(&connection, "vps", &running, None).unwrap(), 0);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &running, None).unwrap(),
+            0
+        );
         assert_eq!(list_session_runs(&connection, None).unwrap().len(), 1);
         // 第三拍：结束且 failed → 落终态带错误原话；再拍不回写
         let closed = vec![session_run_fixture(
@@ -1555,12 +1566,18 @@ mod tests {
             Some(now - 30_000),
             Some("provider 502"),
         )];
-        assert_eq!(record_session_runs(&connection, "vps", &closed, None).unwrap(), 1);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &closed, None).unwrap(),
+            1
+        );
         let runs = list_session_runs(&connection, None).unwrap();
         assert_eq!(runs[0].status.as_deref(), Some("failed"));
         assert_eq!(runs[0].error.as_deref(), Some("provider 502"));
         assert_eq!(runs[0].ended_at_ms, Some(now - 30_000));
-        assert_eq!(record_session_runs(&connection, "vps", &closed, None).unwrap(), 0);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &closed, None).unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -1576,9 +1593,15 @@ mod tests {
             Some(now - 20_000),
             None,
         )];
-        assert_eq!(record_session_runs(&connection, "vps", &missed, None).unwrap(), 1);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &missed, None).unwrap(),
+            1
+        );
         // 同一结束时间戳重复观测 → 不重复补
-        assert_eq!(record_session_runs(&connection, "vps", &missed, None).unwrap(), 0);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &missed, None).unwrap(),
+            0
+        );
         assert_eq!(list_session_runs(&connection, None).unwrap().len(), 1);
         // 漏采窗口外（>1h）的老终态不补
         let old = vec![session_run_fixture(
@@ -1589,7 +1612,10 @@ mod tests {
             Some(now - 2 * 3_600_000),
             None,
         )];
-        assert_eq!(record_session_runs(&connection, "vps", &old, None).unwrap(), 0);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &old, None).unwrap(),
+            0
+        );
     }
 
     #[test]
