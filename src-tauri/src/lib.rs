@@ -1630,7 +1630,10 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "退出 Metrik", true, None::<&str>)?;
     #[cfg(target_os = "linux")]
-    let menu = Menu::with_items(app, &[&toggle, &expanded, &tasks_widget, &pinned, &separator, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&toggle, &expanded, &tasks_widget, &pinned, &separator, &quit],
+    )?;
     #[cfg(not(target_os = "linux"))]
     let menu = Menu::with_items(app, &[&toggle, &expanded, &tasks_widget, &separator, &quit])?;
 
