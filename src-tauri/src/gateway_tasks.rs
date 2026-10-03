@@ -595,6 +595,7 @@ pub struct SessionUsage {
 pub fn fetch_agents_snapshot(
     target: &GatewayTarget,
     connection: Option<&Connection>,
+    options: &SessionLedgerOptions,
 ) -> Result<AgentsSnapshot> {
     let identity_dir = match &target.identity_dir {
         Some(dir) => dir.clone(),
@@ -727,6 +728,7 @@ pub fn fetch_agents_snapshot(
             &target.label,
             &session_usages,
             Some(&mut client),
+            options,
         );
     }
 
@@ -1048,6 +1050,27 @@ const SESSION_RUN_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 /// 从未观测到"运行中"的 run（两拍之间开始并结束的短 run）：结束时间在此窗口
 /// 内的终态会话按漏采补记一行，同一结束时间戳只补一次。
 const SESSION_RUN_MISSED_WINDOW_MS: i64 = 60 * 60 * 1000;
+/// 比这更短的会话 run 不是真工作：sessions_send announce 唤醒会话产生的记账
+/// 幻影（2026-10-03 实测 12~23ms 即被 superseded，模型运行时根本没起），
+/// lastRun 指针会停在幻影上，把真实 run 的成败掩盖掉。不入账、不当失败。
+const SESSION_RUN_MIN_RUNTIME_MS: i64 = 1000;
+
+/// 会话台账的可调口径（设置页"任务追踪"→实时监控参数下发）：保留期与漏采
+/// 补记窗口。幻影阈值是内部容错常量，不开放配置（调大吞真实短任务）。
+#[derive(Clone, Copy, Debug)]
+pub struct SessionLedgerOptions {
+    pub retention_ms: i64,
+    pub missed_window_ms: i64,
+}
+
+impl Default for SessionLedgerOptions {
+    fn default() -> Self {
+        Self {
+            retention_ms: SESSION_RUN_RETENTION_MS,
+            missed_window_ms: SESSION_RUN_MISSED_WINDOW_MS,
+        }
+    }
+}
 
 fn ensure_session_run_table(connection: &Connection) -> Result<()> {
     connection.execute_batch(
@@ -1083,6 +1106,14 @@ fn session_run_terminal_status(session: &SessionUsage) -> (&'static str, Option<
     }
 }
 
+/// 低于最短时长的终态 run 视为 announce 幻影（见 SESSION_RUN_MIN_RUNTIME_MS）。
+fn session_run_is_phantom(session: &SessionUsage) -> bool {
+    session
+        .runtime_ms
+        .map(|ms| ms < SESSION_RUN_MIN_RUNTIME_MS)
+        .unwrap_or(false)
+}
+
 /// 把快照里的会话 run 增量记入本地台账：
 /// - hasActiveRun=true 且无开放行 → 新记一行"running"（started 取会话字段，缺省现在）；
 /// - hasActiveRun=true 且已有开放行 → 刷新 last_seen / 标题 / 进度；
@@ -1098,12 +1129,13 @@ fn record_session_runs(
     target_label: &str,
     sessions: &[SessionUsage],
     mut client: Option<&mut GatewayClient>,
+    options: &SessionLedgerOptions,
 ) -> Result<usize> {
     ensure_session_run_table(connection)?;
     let now = chrono::Utc::now().timestamp_millis();
     let _ = connection.execute(
         "DELETE FROM session_run WHERE first_seen_ms < ?1",
-        rusqlite::params![now - SESSION_RUN_RETENTION_MS],
+        rusqlite::params![now - options.retention_ms],
     );
     let mut written = 0usize;
     for session in sessions {
@@ -1145,7 +1177,9 @@ fn record_session_runs(
             if let Some(client) = client.as_deref_mut() {
                 if let Ok(payload) = client.call(
                     "chat.history",
-                    json!({"sessionKey": session.key, "limit": 12}),
+                    // 窗口太短会被人/agent 热闹的长对话淹没 user 消息（2026-10-03
+                    // 实测 12 条全只剩 assistant/toolResult），放宽到 50。
+                    json!({"sessionKey": session.key, "limit": 50}),
                 ) {
                     let title = extract_dispatch_title(&payload);
                     let progress = extract_last_tool_progress(&payload);
@@ -1163,7 +1197,13 @@ fn record_session_runs(
                 rusqlite::params![run_row, now],
             );
         } else if let Some(id) = open {
-            let (status, error) = session_run_terminal_status(session);
+            // 终态字段指向幻影时，被观察的那个真实 run 的结果网关没单独暴露
+            // （2026-10-03 实测 6/6 都是真回复了 OK）：按完成收行，不造失败。
+            let (status, error) = if session_run_is_phantom(session) {
+                ("done", None)
+            } else {
+                session_run_terminal_status(session)
+            };
             connection.execute(
                 "UPDATE session_run SET status = ?2, error = ?3, \
                  ended_at_ms = COALESCE(?4, ?5), last_seen_ms = ?5 \
@@ -1173,7 +1213,11 @@ fn record_session_runs(
             written += 1;
         } else if let Some(ended) = session.ended_at {
             // 漏采补记：短 run 在两拍之间结束，从没被观测为 running。
-            if now - ended > SESSION_RUN_MISSED_WINDOW_MS {
+            if now - ended > options.missed_window_ms {
+                continue;
+            }
+            // announce 幻影（<1s 终态）不是工作，不补记。
+            if session_run_is_phantom(session) {
                 continue;
             }
             let exists: bool = connection
@@ -1246,15 +1290,55 @@ fn trim_system_prefix(text: &str) -> &str {
     current
 }
 
-/// 标题 = 最近一条 user 消息的原话（剥 System 前缀，截 200 字）。
+/// 飞书插件把 [System: ...] 说明段整段拼在正文末尾（实测 2026-10-03），剥掉。
+/// 只剥"到字符串结尾为止"的完整块——正文中间的 [System: 字样不动。
+fn trim_system_suffix(text: &str) -> &str {
+    let mut current = text.trim_end();
+    while let Some(open) = current.rfind("[System:") {
+        let Some(close) = current[open..].find(']') else {
+            break;
+        };
+        if current[open + close + 1..].trim().is_empty() {
+            current = current[..open].trim_end();
+        } else {
+            break;
+        }
+    }
+    current
+}
+
+/// 飞书渠道把发送者 id 拼在正文最前（"ou_xxx: 派活原话"），按消息元数据剥掉。
+fn strip_sender_prefix<'a>(text: &'a str, message: &Value) -> &'a str {
+    let Some(meta) = message.get("__openclaw") else {
+        return text;
+    };
+    for field in ["senderId", "senderName"] {
+        let Some(sender) = meta.get(field).and_then(Value::as_str) else {
+            continue;
+        };
+        if sender.is_empty() {
+            continue;
+        }
+        let prefix = format!("{sender}: ");
+        if let Some(rest) = text.strip_prefix(prefix.as_str()) {
+            return rest;
+        }
+    }
+    text
+}
+
+/// 标题 = 最近一条 user 消息的原话（剥发送者前缀与 System 段，截 200 字）。
 fn extract_dispatch_title(payload: &Value) -> Option<String> {
     let messages = payload.get("messages")?.as_array()?;
     for message in messages.iter().rev() {
         if message.get("role").and_then(Value::as_str) != Some("user") {
             continue;
         }
-        let raw = session_content_text(message.get("content"))?;
-        let text = trim_system_prefix(&raw);
+        let Some(raw) = session_content_text(message.get("content")) else {
+            continue;
+        };
+        let text = trim_system_prefix(strip_sender_prefix(&raw, message));
+        let text = trim_system_suffix(text);
         if text.is_empty() {
             continue;
         }
@@ -1341,6 +1425,11 @@ pub fn list_session_runs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DEFAULT_LEDGER: SessionLedgerOptions = SessionLedgerOptions {
+        retention_ms: SESSION_RUN_RETENTION_MS,
+        missed_window_ms: SESSION_RUN_MISSED_WINDOW_MS,
+    };
 
     fn memory_db() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
@@ -1547,7 +1636,7 @@ mod tests {
             None,
         )];
         assert_eq!(
-            record_session_runs(&connection, "vps", &running, None).unwrap(),
+            record_session_runs(&connection, "vps", &running, None, &DEFAULT_LEDGER).unwrap(),
             1
         );
         let runs = list_session_runs(&connection, None).unwrap();
@@ -1556,7 +1645,7 @@ mod tests {
         assert_eq!(runs[0].started_at_ms, Some(started));
         // 第二拍：还在跑 → 不新增
         assert_eq!(
-            record_session_runs(&connection, "vps", &running, None).unwrap(),
+            record_session_runs(&connection, "vps", &running, None, &DEFAULT_LEDGER).unwrap(),
             0
         );
         assert_eq!(list_session_runs(&connection, None).unwrap().len(), 1);
@@ -1570,7 +1659,7 @@ mod tests {
             Some("provider 502"),
         )];
         assert_eq!(
-            record_session_runs(&connection, "vps", &closed, None).unwrap(),
+            record_session_runs(&connection, "vps", &closed, None, &DEFAULT_LEDGER).unwrap(),
             1
         );
         let runs = list_session_runs(&connection, None).unwrap();
@@ -1578,7 +1667,7 @@ mod tests {
         assert_eq!(runs[0].error.as_deref(), Some("provider 502"));
         assert_eq!(runs[0].ended_at_ms, Some(now - 30_000));
         assert_eq!(
-            record_session_runs(&connection, "vps", &closed, None).unwrap(),
+            record_session_runs(&connection, "vps", &closed, None, &DEFAULT_LEDGER).unwrap(),
             0
         );
     }
@@ -1597,12 +1686,12 @@ mod tests {
             None,
         )];
         assert_eq!(
-            record_session_runs(&connection, "vps", &missed, None).unwrap(),
+            record_session_runs(&connection, "vps", &missed, None, &DEFAULT_LEDGER).unwrap(),
             1
         );
         // 同一结束时间戳重复观测 → 不重复补
         assert_eq!(
-            record_session_runs(&connection, "vps", &missed, None).unwrap(),
+            record_session_runs(&connection, "vps", &missed, None, &DEFAULT_LEDGER).unwrap(),
             0
         );
         assert_eq!(list_session_runs(&connection, None).unwrap().len(), 1);
@@ -1616,8 +1705,114 @@ mod tests {
             None,
         )];
         assert_eq!(
-            record_session_runs(&connection, "vps", &old, None).unwrap(),
+            record_session_runs(&connection, "vps", &old, None, &DEFAULT_LEDGER).unwrap(),
             0
+        );
+    }
+
+    #[test]
+    fn session_run_ignores_phantom_announce_runs() {
+        let connection = memory_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        let superseded = "prepared model runtime plugin generation was superseded";
+        // 12ms 即终态的幻影（sessions_send announce 唤醒即被取代）→ 不入账
+        let mut phantom = session_run_fixture(
+            "agent:kaiyang:feishu:group:oc_1",
+            false,
+            Some("failed"),
+            Some(now - 5_000),
+            Some(now - 4_000),
+            Some(superseded),
+        );
+        phantom.runtime_ms = Some(12);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &[phantom], None, &DEFAULT_LEDGER).unwrap(),
+            0
+        );
+        assert_eq!(list_session_runs(&connection, None).unwrap().len(), 0);
+        // 真实短失败（5s，模型真跑过）照常补记
+        let mut real = session_run_fixture(
+            "agent:tianji:feishu:group:oc_1",
+            false,
+            Some("failed"),
+            Some(now - 9_000),
+            Some(now - 4_000),
+            Some("provider 502"),
+        );
+        real.runtime_ms = Some(5_000);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &[real], None, &DEFAULT_LEDGER).unwrap(),
+            1
+        );
+        assert_eq!(list_session_runs(&connection, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn session_run_closes_observed_row_when_fields_point_at_phantom() {
+        let connection = memory_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        let key = "agent:yaoguang:feishu:group:oc_1";
+        let running = vec![session_run_fixture(
+            key,
+            true,
+            Some("running"),
+            Some(now - 60_000),
+            None,
+            None,
+        )];
+        assert_eq!(
+            record_session_runs(&connection, "vps", &running, None, &DEFAULT_LEDGER).unwrap(),
+            1
+        );
+        // 终态字段指向 12ms 幻影：真实 run 结果未单独暴露，按完成收行、不造失败
+        let superseded = "prepared model runtime plugin generation was superseded";
+        let mut phantom = session_run_fixture(
+            key,
+            false,
+            Some("failed"),
+            Some(now - 60_000),
+            Some(now - 2_000),
+            Some(superseded),
+        );
+        phantom.runtime_ms = Some(12);
+        assert_eq!(
+            record_session_runs(&connection, "vps", &[phantom], None, &DEFAULT_LEDGER).unwrap(),
+            1
+        );
+        let runs = list_session_runs(&connection, None).unwrap();
+        assert_eq!(runs[0].status.as_deref(), Some("done"));
+        assert_eq!(runs[0].error.as_deref(), None);
+    }
+
+    #[test]
+    fn dispatch_title_strips_sender_id_and_system_blocks() {
+        // 真机实测形态：发送者 open_id 前缀 + 尾部两段 [System: ...] 说明
+        let payload = json!({"messages": [
+            {"role": "assistant", "content": "OK"},
+            {"role": "user", "content": concat!(
+                "ou_a31eeb382624e5bd502bc339e01c1a36: 重新执行一个最省token的任务\n\n",
+                "[System: mention tags may appear as <at user_id=\"...\">name</at>.]",
+                "[System: If user_id is \"ou_2a92\", that mention refers to you.]"
+            ),
+             "__openclaw": {"senderId": "ou_a31eeb382624e5bd502bc339e01c1a36"}},
+        ]});
+        assert_eq!(
+            extract_dispatch_title(&payload).as_deref(),
+            Some("重新执行一个最省token的任务")
+        );
+        // 无发送者元数据：头部 [System:] 照旧剥，尾部块也剥
+        let plain = json!({"messages": [
+            {"role": "user", "content": "[System: intro] 帮我跑一遍\n\n[System: tail]"}
+        ]});
+        assert_eq!(extract_dispatch_title(&plain).as_deref(), Some("帮我跑一遍"));
+        // content 缺失的 user 消息跳过、继续往早找，不整单放弃
+        let hole = json!({"messages": [
+            {"role": "user", "content": null},
+            {"role": "user", "content": "较早的派活原话"}
+        ]});
+        assert_eq!(
+            extract_dispatch_title(&hole).as_deref(),
+            Some("较早的派活原话")
         );
     }
 
@@ -1642,7 +1837,7 @@ mod tests {
             None,
             None,
         )];
-        record_session_runs(&connection, "vps", &fresh, None).unwrap();
+        record_session_runs(&connection, "vps", &fresh, None, &DEFAULT_LEDGER).unwrap();
         let runs = list_session_runs(&connection, None).unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status.as_deref(), Some("running"));

@@ -131,29 +131,9 @@ export function sessionRunHopStatus(status) {
   return "running";
 }
 
-/// 同一轮派活的 run 序列（迷你竖条胶卷）：群聊接力没有跨星 runId，不硬造任务链——
-/// 这里取的是同一群聊（chat id 相同）在当前 run 开始前 30 分钟内的邻近 run +
-/// 当前 run，按开始时间排序，每格都是真实发生的会话 run（Leo 拍板的形态）。
-/// runs = 会话工作台账行（camelCase，来自 session_run_list）；focus = 当前行。
-export function sessionEpisodeHops(runs, focus) {
-  if (!focus) return [];
-  const chatIdOf = (key) => {
-    const text = key || "";
-    const marker = text.indexOf(":group:");
-    return marker >= 0 ? text.slice(marker + 1) : text;
-  };
-  const focusChat = chatIdOf(focus.sessionKey);
-  const focusStart = focus.startedAtMs ?? 0;
-  const WINDOW_MS = 30 * 60 * 1000;
-  const episode = (runs ?? [])
-    .filter((run) => {
-      if (!run || chatIdOf(run.sessionKey) !== focusChat) return false;
-      const start = run.startedAtMs ?? 0;
-      return start <= focusStart + 60_000 && focusStart - start <= WINDOW_MS;
-    })
-    .sort((a, b) => (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0))
-    .slice(-6);
-  return episode.map((run) => ({
+/// 单条会话 run → hop 形态（胶卷格与横条行悬停卡共用同一映射）。
+export function sessionRunHop(run) {
+  return {
     taskId: `session-run:${run.id ?? run.runId ?? run.sessionKey}`,
     agentId: run.agentId,
     status: sessionRunHopStatus(run.status),
@@ -162,5 +142,42 @@ export function sessionEpisodeHops(runs, focus) {
     startedAtMs: run.startedAtMs ?? 0,
     endedAtMs: run.endedAtMs ?? null,
     error: run.error ?? null,
-  }));
+  };
+}
+
+/// 同一轮派活的 run 序列（迷你竖条胶卷）：群聊接力没有跨星 runId，不硬造任务链——
+/// 同一群聊（chat id 相同）里从当前 run 往回走链：上一棒的结束（缺省用开始）到
+/// 下一棒开始，沉默 ≤ gapMs 就串成同一轮。锚"交接断档"而不是"离当前多久"——
+/// 任务总时长不可预知（Leo 2026-10-04 拍板），长任务只要一直有交接就不断链；
+/// 只有中途长时间沉默（如等 Leo 确认几小时）才切出新的一段。
+/// gapMs 可在设置页"实时监控参数"里调（EPISODE_HANDOFF_GAP_MS 只是缺省值）。
+/// runs = 会话工作台账行（camelCase，来自 session_run_list）；focus = 当前行。
+const EPISODE_HANDOFF_GAP_MS = 60 * 60 * 1000;
+
+export function sessionEpisodeHops(runs, focus, gapMs = EPISODE_HANDOFF_GAP_MS) {
+  if (!focus) return [];
+  const chatIdOf = (key) => {
+    const text = key || "";
+    const marker = text.indexOf(":group:");
+    return marker >= 0 ? text.slice(marker + 1) : text;
+  };
+  const focusChat = chatIdOf(focus.sessionKey);
+  const focusStart = focus.startedAtMs ?? 0;
+  const sameChat = (runs ?? [])
+    .filter((run) => {
+      if (!run || chatIdOf(run.sessionKey) !== focusChat) return false;
+      return (run.startedAtMs ?? 0) <= focusStart + 60_000;
+    })
+    .sort((a, b) => (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0));
+  const episode = [];
+  for (let i = sameChat.length - 1; i >= 0; i--) {
+    const run = sameChat[i];
+    if (episode.length > 0) {
+      const chainStart = episode[0].startedAtMs ?? 0;
+      const runEnd = run.endedAtMs ?? run.startedAtMs ?? 0;
+      if (chainStart - runEnd > gapMs) break;
+    }
+    episode.unshift(run);
+  }
+  return episode.map(sessionRunHop);
 }

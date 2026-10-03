@@ -4692,6 +4692,61 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   margin-top: 12px;
 }
 
+/* 实时监控参数卡：分组小标题 + 双列网格，字段不再是裸 label 满屏飘 */
+.monitor-groups {
+  display: grid;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.monitor-group {
+  display: grid;
+  gap: 8px;
+}
+
+.monitor-group-title {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.monitor-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  opacity: 0.92;
+}
+
+.monitor-field input {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(31, 33, 36, 0.18);
+  border-radius: 8px;
+  background: transparent;
+  color: #26282b;
+  font: inherit;
+  font-size: 12.5px;
+  width: 100%;
+}
+
+.monitor-field input:focus-visible { outline: 2px solid rgba(31, 33, 36, 0.35); outline-offset: 1px; }
+
+:root[data-theme="dark"] .monitor-field input {
+  border-color: rgba(240, 240, 240, 0.18);
+  color: #ececec;
+}
+
+:root[data-theme="dark"] .monitor-field input:focus-visible { outline-color: rgba(240, 240, 240, 0.4); }
+
+.monitor-groups .ledger-button { justify-self: start; }
+
 .gateway-form input {
   flex: 1 1 180px;
   min-height: 38px;
@@ -6778,6 +6833,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .monitor-field--check {
+  display: flex;
   flex-direction: row;
   align-items: center;
   gap: 7px;
@@ -6786,6 +6842,11 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .monitor-field--check input {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  padding: 0;
+  flex: none;
   accent-color: currentColor;
 }
 
@@ -6981,15 +7042,25 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .tasks-mini-ticker .tasks-mini-title { font-size: 11.5px; }
 .tasks-mini-ticker .tasks-mini-row small { display: none; }
 
+/* 横条 +N 角标：与竖条同一语义（首行/胶卷之外的剩余工作数，点击=展开，
+   悬停列清单）。不承载失败告警——失败在胶卷✕跳/悬停卡/展开面板已有归属，
+   角标只报数量（Leo 2026-10-04 拍板：1 个失败染红整枚不成比例，撤） */
 .tasks-mini-more {
   flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
   font-size: 10px;
+  color: inherit;
   opacity: 0.55;
+  cursor: pointer;
   font-variant-numeric: tabular-nums;
 }
+.tasks-mini-more:hover { opacity: 0.85; }
 
 /* 竖条 +N 角标（首行链路之外的活跃/失败任务数）：有活干才存在，点击=展开。
-   绿=还有进行中，红=还有失败；浅色壳随动 */
+   绿=还有进行中；失败不在角标标色（口径同横条）；浅色壳随动 */
 .tasks-mini-more--vertical {
   flex: none;
   align-self: center;
@@ -7011,14 +7082,6 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 
 .tasks-mini-more--vertical:hover { background: rgba(111, 196, 154, 0.24); }
 
-.tasks-mini-more--vertical--failed {
-  color: #ec7a63;
-  background: rgba(236, 122, 99, 0.12);
-  border-color: rgba(236, 122, 99, 0.32);
-}
-
-.tasks-mini-more--vertical--failed:hover { background: rgba(236, 122, 99, 0.2); }
-
 .widget-shell--glass-light .tasks-mini-more--vertical {
   color: #1f7a4d;
   background: rgba(31, 122, 77, 0.1);
@@ -7026,14 +7089,6 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .widget-shell--glass-light .tasks-mini-more--vertical:hover { background: rgba(31, 122, 77, 0.18); }
-
-.widget-shell--glass-light .tasks-mini-more--vertical--failed {
-  color: #b3372f;
-  background: rgba(179, 55, 47, 0.08);
-  border-color: rgba(179, 55, 47, 0.28);
-}
-
-.widget-shell--glass-light .tasks-mini-more--vertical--failed:hover { background: rgba(179, 55, 47, 0.16); }
 
 .tasks-mini-dot {
   width: 6px;
@@ -7140,7 +7195,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 /* 竖条悬停详情卡：胶卷包 42px 定位容器（宽随壳内宽，不随扩窗拉伸），
-   卡片浮在靠屏幕中心一侧——side=left 是"胶卷在屏幕左半，卡往右弹"。 */
+   卡片固定朝胶卷左侧弹（Leo 2026-10-03 拍板）——side=right 是"胶卷左侧放得下，
+   卡往左弹"；贴左缘放不下退 side=left 卡往右兜底。 */
 .tasks-mini-railwrap {
   position: relative;
   /* 垂直填满壳内高度（替代原胶卷的直接 flex:1）：内容多时由胶卷自身滚动，

@@ -1821,6 +1821,24 @@ fn session_run_list(
     gateway_tasks::list_session_runs(&connection, limit).map_err(|error| error.to_string())
 }
 
+/// 会话台账口径（设置页"实时监控参数"下发）：保留期 1–90 天、漏采补记 1–72 小时。
+/// 缺省值 = 7 天 / 1 小时。幻影阈值是内部容错，不在设置面暴露。
+#[derive(serde::Deserialize, Clone, Copy, Default)]
+struct SessionLedgerParams {
+    retention_days: Option<i64>,
+    missed_window_hours: Option<i64>,
+}
+
+fn session_ledger_options(params: SessionLedgerParams) -> gateway_tasks::SessionLedgerOptions {
+    let clamp = |value: Option<i64>, default: i64, min: i64, max: i64| {
+        value.map(|v| v.clamp(min, max)).unwrap_or(default)
+    };
+    gateway_tasks::SessionLedgerOptions {
+        retention_ms: clamp(params.retention_days, 7, 1, 90) * 24 * 60 * 60 * 1000,
+        missed_window_ms: clamp(params.missed_window_hours, 1, 1, 72) * 60 * 60 * 1000,
+    }
+}
+
 /// 拉 Agent 会话活动快照（实时监控北斗等多 Agent 协作）：
 /// 数据源 = sessions.list（各星位会话 status/hasActiveRun/updatedAt）+ agents.list。
 /// 同时返回会话级用量明细（sessions，B 链路 token/上下文数据源）。
@@ -1828,10 +1846,12 @@ fn session_run_list(
 #[tauri::command]
 async fn gateway_agents_snapshot(
     gateways: Vec<GatewayTargetConfig>,
+    ledger: Option<SessionLedgerParams>,
     state: State<'_, AppState>,
 ) -> Result<GatewayAgentsPayload, String> {
     let database_path = state.database_path.clone();
     let scan_gate = Arc::clone(&state.scan_gate);
+    let ledger_options = session_ledger_options(ledger.unwrap_or_default());
 
     tauri::async_runtime::spawn_blocking(move || {
         let _gate = scan_gate
@@ -1850,7 +1870,7 @@ async fn gateway_agents_snapshot(
             };
             // 复用任务快照的节流逻辑：agents 快照与任务快照共享同一网关连接
             // 成本，这里独立节流窗口。带连接 → 顺带把会话 run 记入本地台账。
-            match gateway_tasks::fetch_agents_snapshot(&gw, Some(&connection)) {
+            match gateway_tasks::fetch_agents_snapshot(&gw, Some(&connection), &ledger_options) {
                 Ok(snapshot) => {
                     for mut agent in snapshot.agents {
                         agent.agent_id = format!("{}:{}", target.label, agent.agent_id);

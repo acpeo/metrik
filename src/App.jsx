@@ -53,7 +53,7 @@ import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
 import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, loadSessionRuns, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
-import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions, sessionEpisodeHops } from "./taskChains.js";
+import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions, sessionEpisodeHops, sessionRunHop } from "./taskChains.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow, isBalanceWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -1222,7 +1222,7 @@ function ThemeQuickToggle({ theme, darkTheme, onThemeChange }) {
   );
 }
 
-function WindowActions({ mode, pinned, transparent = false, glassTint = "dark", macMinimal = false, theme, darkTheme, onThemeChange, onToggleMode, onTogglePinned, onToggleTransparent }) {
+function WindowActions({ mode, pinned, transparent = false, glassTint = "dark", macMinimal = false, theme, darkTheme, onThemeChange, onToggleMode, onTogglePinned, onToggleTransparent, tasksWidgetEnabled, onToggleTasksWidget }) {
   const glassName = (id) =>
     GLASS_TINT_OPTIONS.find((option) => option.id === id)?.label || "深色";
   const glassCurrent = normalizeGlassTint(glassTint);
@@ -1273,6 +1273,20 @@ function WindowActions({ mode, pinned, transparent = false, glassTint = "dark", 
           title={`外观：${glassLabel}`}
         >
           <CircleHalfTilt size={16} weight={transparent ? "fill" : "light"} aria-hidden="true" />
+        </button>
+      )}
+      {/* 任务追踪小组件一键开关（此前只能托盘右键/设置勾选，可达性缺口）：
+          开=实心高亮，关=描边；状态由 Rust 广播驱动，托盘/自身关闭都同步 */}
+      {onToggleTasksWidget && !macMinimal && (
+        <button
+          type="button"
+          className={`window-action ${tasksWidgetEnabled ? "window-action--active" : ""}`}
+          onClick={onToggleTasksWidget}
+          aria-label={tasksWidgetEnabled ? "关闭任务追踪小组件" : "打开任务追踪小组件"}
+          aria-pressed={tasksWidgetEnabled}
+          title={tasksWidgetEnabled ? "关闭任务追踪小组件" : "打开任务追踪小组件"}
+        >
+          <ListChecks size={16} weight={tasksWidgetEnabled ? "fill" : "light"} aria-hidden="true" />
         </button>
       )}
       {!macMinimal && mode !== "expanded" && (
@@ -1970,6 +1984,24 @@ function TasksWidgetWindow({
   // 发现 6：卡片打开瞬间顺带拉一拍最新数据——开口即最新。2.5s 内重复悬停
   // 不重复打（后端 snapshot 对同网关本就有 2.5s 节流，这里是前端省一层）。
   const lastHoverRefreshAtRef = useRef(0);
+  // 竖条卡片固定朝胶卷左侧弹（Leo 2026-10-03 拍板，替代"朝屏幕中心"）：
+  // 左侧放得下整卡才朝左，贴屏幕左缘放不下时退回朝右兜底（卡片不被屏幕边裁掉）。
+  // 定侧要在悬停瞬间同步给出——钉边类若等原生扩窗返回 layout 才上，类提交晚于
+  // 窗口扩宽，胶卷会先漂到变宽后的居中位再弹回钉边位——指针在这个间隙离开胶卷
+  // → 260ms 收窗 → 又进入 → 再扩，拉锯循环（0.20.10 真机实测：竖条左右跑动、
+  // 详情卡停不住）。预览（无原生扩窗）以视口左缘为界，真机以工作区左缘为界。
+  const verticalHoverSide = () => {
+    const rail = railWrapRef.current;
+    if (!rail) return "left";
+    const rect = rail.getBoundingClientRect();
+    const need = TASKS_HOPCARD_WIDTH + TASKS_HOPCARD_GAP;
+    if (!isTauriRuntime()) {
+      return rect.left - need >= 8 ? "right" : "left";
+    }
+    const railLeftScreen = window.screenX + rect.left;
+    const availLeft = Number.isFinite(window.screen?.availLeft) ? window.screen.availLeft : 0;
+    return railLeftScreen - need >= availLeft + 8 ? "right" : "left";
+  };
   const showHopCard = (hop, index, total, event) => {
     window.clearTimeout(hopCardLeaveTimerRef.current);
     if (!hoverCardRef.current && Date.now() - lastHoverRefreshAtRef.current > 2500) {
@@ -1989,6 +2021,7 @@ function TasksWidgetWindow({
         windowY: wrap ? wrap.top + center : cell.top,
         // 预览态（扩窗 no-op）卡片用 fixed 定位逃出壳的 overflow 裁剪，记下胶卷右缘
         wrapRight: wrap ? wrap.right : cell.right,
+        side: verticalHoverSide(),
         layout: null,
       });
     } else {
@@ -2077,7 +2110,7 @@ function TasksWidgetWindow({
   const agentNameMap = useMemo(() => buildAgentNameMap(feed.agents?.agents), [feed.agents]);
   // 失败/完成的口径 = 近 24 小时内结束的任务（账本保留 7 天，不设窗口的话
   // 数字只涨不清，就成了历史累计而不是"当前这批工作"的状态）。
-  const recentWindowMs = 24 * 60 * 60 * 1000;
+  const recentWindowMs = loadMonitorConfig().failedWindowH * 3_600_000;
   const taskEndedAt = (task) =>
     Number.isFinite(task.endedAtMs) ? task.endedAtMs : Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
   const recentlyEnded = tasks.filter(
@@ -2098,6 +2131,9 @@ function TasksWidgetWindow({
   const taskStartedAt = (task) => task.startedAtMs ?? task.firstSeenMs ?? 0;
   const sessionActivityAt = (run) => run.endedAtMs ?? run.startedAtMs ?? run.lastSeenMs ?? 0;
   const staleMs = Math.max(10, loadMonitorConfig().staleThresholdSec) * 1000;
+  // 接力分段阈值（设置页"实时监控参数"可调）：每拍渲染现读配置，保存后一个
+  // 轮询周期内自然生效，不需要跨窗口事件。
+  const episodeGapMs = loadMonitorConfig().episodeGapMin * 60_000;
   const shellAppearance = glassShellAppearance("widget", {
     transparent,
     glassMode,
@@ -2151,13 +2187,26 @@ function TasksWidgetWindow({
     );
   })();
   const otherRows = miniRowsAll.filter((row) => !shownWorkKeys.has(miniRowKey(row)));
-  const otherRowsFailed = otherRows.some((row) => row.tone === "failed");
+  // +N 角标的悬停清单（横竖同一份口径）：谁·干什么（失败）
+  const otherRowsSummary = otherRows
+    .map((row) => {
+      const name =
+        row.kind === "session"
+          ? agentDisplayName(agentNameMap, row.run.agentId) || row.run.agentId || "?"
+          : agentDisplayName(agentNameMap, row.task.agentId) || row.task.agentId || "?";
+      const text =
+        row.kind === "session"
+          ? row.run.title || "会话工作"
+          : row.task.title || row.task.taskId;
+      return `${name}·${text}${row.tone === "failed" ? "（失败）" : ""}`;
+    })
+    .join("；");
   // 竖条胶卷的跳集：登记任务 = 任务链；会话工作 = 同轮派活的真实 run 序列。
   const miniVerticalHops = (() => {
     const first = miniRows[0];
     if (!first) return [];
     return first.kind === "session"
-      ? sessionEpisodeHops(sessionRuns, first.run)
+      ? sessionEpisodeHops(sessionRuns, first.run, episodeGapMs)
       : chainHopsFor(first.task, chainIndex);
   })();
   const miniCurrentHopId = miniRows[0]
@@ -2206,7 +2255,7 @@ function TasksWidgetWindow({
       return { top: Math.round(top), left: Math.round(left) };
     }
     const railRect = railWrapRef.current?.getBoundingClientRect();
-    const side = hoverCard.layout?.side ?? "right";
+    const side = hoverCard.layout?.side ?? hoverCard.side ?? "right";
     const left = railRect
       ? side === "left"
         ? railRect.right + TASKS_HOPCARD_GAP
@@ -2226,26 +2275,46 @@ function TasksWidgetWindow({
       runWindowAction(() => resizeCurrentWindow(320, 384));
     };
     const renderMiniRow = ({ kind = "task", task, run, tone, withChain = false, onHopHover }) => {
-      // 会话工作行：状态点 + 星名 + 派活原话（无链；横条不做逐跳悬停卡，原生
-      // title 承载，展开窗里有完整信息）
+      // 会话工作行：接力段 ≥2 run 时与登记任务链同款胶卷（沿用"有链时链优先"
+      // 的拍板，横竖两个方向同一形态），逐跳悬停同一张详情卡；单 run 退回
+      // 状态点 + 星名 + 派活原话，悬停出单跳卡，卡接管后撤原生 title。
       if (kind === "session") {
         const agentName = agentDisplayName(agentNameMap, run.agentId);
         const title = run.title || "会话工作";
         const failed = tone === "failed";
+        const taskId = `session-run:${run.id ?? run.runId ?? run.sessionKey}`;
+        const hops = feed.sessionRuns?.length ? sessionEpisodeHops(feed.sessionRuns, run) : [];
+        const hasEpisode = hops.length >= 2;
         return (
           <button
-            key={`session-run:${run.id ?? run.sessionKey}`}
+            key={taskId}
             type="button"
             className={`tasks-mini-row${failed ? " tasks-mini-row--failed" : ""}`}
             onClick={expand}
-            title={`${agentName ? `${agentName} · ` : ""}${title}${failed && run.error ? `（${run.error}）` : ""} · 点击展开`}
+            onPointerEnter={onHopHover && !hasEpisode ? (event) => onHopHover(sessionRunHop(run), 0, 1, event) : undefined}
+            title={
+              onHopHover && !hasEpisode
+                ? undefined
+                : `${agentName ? `${agentName} · ` : ""}${title}${failed && run.error ? `（${run.error}）` : ""} · 点击展开`
+            }
           >
-            <i
-              className={`tasks-mini-dot ${failed ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
-              aria-hidden="true"
-            />
-            {agentName && <span className="tasks-mini-agent">{agentName}</span>}
-            <span className="tasks-mini-title">{title}</span>
+            {hasEpisode ? (
+              <ChainFilmstrip
+                hops={hops}
+                currentTaskId={taskId}
+                agentNameMap={agentNameMap}
+                onHopHover={onHopHover}
+              />
+            ) : (
+              <>
+                <i
+                  className={`tasks-mini-dot ${failed ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
+                  aria-hidden="true"
+                />
+                {agentName && <span className="tasks-mini-agent">{agentName}</span>}
+                <span className="tasks-mini-title">{title}</span>
+              </>
+            )}
           </button>
         );
       }
@@ -2347,15 +2416,15 @@ function TasksWidgetWindow({
         >
           {miniVertical ? (
             // 竖条 = 链路胶卷竖放：当前执行 agent 垂直居中，滚轮上下滑（与横条对称）。
-            // 胶卷包一层 42px 定位容器：悬停跳时详情卡浮在靠屏幕中心一侧（原生窗
-            // 由 expandTasksHover 临时扩宽，pointer 离开 260ms 后还原）。
+            // 胶卷包一层 42px 定位容器：悬停跳时详情卡固定朝胶卷左侧弹（贴左缘放不下
+            // 才朝右兜底；原生窗由 expandTasksHover 临时扩宽，pointer 离开 260ms 后还原）。
             // 条脚 +N 角标（发现 1A）：首行链路之外的活跃/失败任务数——不悬停也
             // 看得到"还有活"，点击展开完整视图；卡片"其他进行中"节负责是谁。
             miniRows.length > 0 ? (
               <>
                 <div
                   ref={railWrapRef}
-                  className={`tasks-mini-railwrap${hoverCard?.layout ? ` tasks-mini--hover-${hoverCard.layout.side}` : ""}`}
+                  className={`tasks-mini-railwrap${(hoverCard?.layout?.side ?? hoverCard?.side) ? ` tasks-mini--hover-${hoverCard.layout?.side ?? hoverCard.side}` : ""}`}
                   onPointerLeave={hideHopCard}
                 >
                   <ChainFilmstrip
@@ -2370,22 +2439,10 @@ function TasksWidgetWindow({
                 {otherRows.length > 0 && (
                   <button
                     type="button"
-                    className={`tasks-mini-more--vertical${otherRowsFailed ? " tasks-mini-more--vertical--failed" : ""}`}
+                    className="tasks-mini-more--vertical"
                     onClick={expand}
                     aria-label={`还有 ${otherRows.length} 个工作，点击展开`}
-                    title={`还有 ${otherRows.length} 个工作：${otherRows
-                      .map((row) => {
-                        const name =
-                          row.kind === "session"
-                            ? agentDisplayName(agentNameMap, row.run.agentId) || row.run.agentId || "?"
-                            : agentDisplayName(agentNameMap, row.task.agentId) || row.task.agentId || "?";
-                        const text =
-                          row.kind === "session"
-                            ? row.run.title || "会话工作"
-                            : row.task.title || row.task.taskId;
-                        return `${name}·${text}${row.tone === "failed" ? "（失败）" : ""}`;
-                      })
-                      .join("；")}`}
+                    title={`还有 ${otherRows.length} 个工作：${otherRowsSummary}`}
                   >
                     +{otherRows.length}
                   </button>
@@ -2408,7 +2465,15 @@ function TasksWidgetWindow({
                   {otherRows.length > 0 &&
                     (miniRows[0].kind === "session" ||
                       chainHopsFor(miniRows[0].task, chainIndex).length < 2) && (
-                      <span className="tasks-mini-more">+{otherRows.length}</span>
+                      <button
+                        type="button"
+                        className="tasks-mini-more"
+                        onClick={expand}
+                        aria-label={`还有 ${otherRows.length} 个工作，点击展开`}
+                        title={`还有 ${otherRows.length} 个工作：${otherRowsSummary}`}
+                      >
+                        +{otherRows.length}
+                      </button>
                     )}
                 </div>
               ) : (
@@ -2840,6 +2905,8 @@ function CompactWidget({
   loading,
   pinned,
   transparent,
+  tasksWidgetEnabled,
+  onToggleTasksWidget,
   glassMode = "css",
   glassTint = "dark",
   glassInk = "dark",
@@ -3036,6 +3103,8 @@ function CompactWidget({
             transparent={transparent}
             glassTint={glassTint}
             macMinimal={IS_MAC}
+            tasksWidgetEnabled={tasksWidgetEnabled}
+            onToggleTasksWidget={onToggleTasksWidget}
             onToggleMode={onExpand}
             onTogglePinned={onTogglePinned}
             onToggleTransparent={onToggleTransparent}
@@ -4499,7 +4568,11 @@ function MonitorSettingsCard() {
   const current = loadMonitorConfig();
   const dirty =
     Number(draft.refreshIntervalSec) !== current.refreshIntervalSec ||
-    Number(draft.staleThresholdSec) !== current.staleThresholdSec;
+    Number(draft.staleThresholdSec) !== current.staleThresholdSec ||
+    Number(draft.episodeGapMin) !== current.episodeGapMin ||
+    Number(draft.failedWindowH) !== current.failedWindowH ||
+    Number(draft.ledgerRetentionDays) !== current.ledgerRetentionDays ||
+    Number(draft.missedWindowHours) !== current.missedWindowHours;
 
   const apply = () => {
     saveMonitorConfig(draft);
@@ -4508,50 +4581,61 @@ function MonitorSettingsCard() {
     setTimeout(() => setSaved(false), 2500);
   };
 
+  const numberField = (label, aria, key, min, max) => (
+    <label className="monitor-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        value={draft[key]}
+        aria-label={aria}
+        onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))}
+      />
+    </label>
+  );
+
   return (
     <div className="settings-card">
       <h2>实时监控参数</h2>
       <p className="gateway-hint">
-        任务页的自动同步间隔与"无活动"判定阈值。保存后立即生效，无需重启或重装。
+        任务页的同步节奏、接力分段与本地台账口径。保存后立即生效，无需重启或重装。
       </p>
-      <div className="gateway-form">
-        <label className="monitor-field">
-          <span>自动同步间隔（秒，1–60）</span>
-          <input
-            type="number"
-            min="1"
-            max="60"
-            value={draft.refreshIntervalSec}
-            aria-label="自动同步间隔秒数"
-            onChange={(event) => setDraft((current) => ({ ...current, refreshIntervalSec: event.target.value }))}
-          />
-        </label>
-        <label className="monitor-field">
-          <span>无活动判定阈值（秒，10–3600）</span>
-          <input
-            type="number"
-            min="10"
-            max="3600"
-            value={draft.staleThresholdSec}
-            aria-label="无活动判定阈值秒数"
-            onChange={(event) => setDraft((current) => ({ ...current, staleThresholdSec: event.target.value }))}
-          />
-        </label>
-        <label className="monitor-field monitor-field--check">
-          <input
-            type="checkbox"
-            checked={widgetTasks}
-            onChange={(event) => {
-              const next = event.target.checked;
-              localStorage.setItem("metrik:tasksWidget", next ? "on" : "off");
-              setWidgetTasks(next);
-              // 独立小组件：勾选即开/关那扇常驻窗（幂等），不等下次启动。
-              setTasksWidgetWindow(next);
-              window.dispatchEvent(new Event("metrik-monitor-changed"));
-            }}
-          />
-          <span>在桌面显示任务小组件（独立小窗）</span>
-        </label>
+      <div className="monitor-groups">
+        <section className="monitor-group">
+          <span className="monitor-group-title">同步节奏</span>
+          <div className="monitor-grid">
+            {numberField("自动同步间隔（秒，1–60）", "自动同步间隔秒数", "refreshIntervalSec", 1, 60)}
+            {numberField("无活动判定阈值（秒，10–3600）", "无活动判定阈值秒数", "staleThresholdSec", 10, 3600)}
+          </div>
+        </section>
+        <section className="monitor-group">
+          <span className="monitor-group-title">接力与台账</span>
+          <div className="monitor-grid">
+            {numberField("接力分段沉默上限（分钟，5–720）", "接力分段沉默上限分钟数", "episodeGapMin", 5, 720)}
+            {numberField("失败工作显示（小时，1–168）", "失败工作显示小时数", "failedWindowH", 1, 168)}
+            {numberField("台账保留期（天，1–90）", "台账保留期天数", "ledgerRetentionDays", 1, 90)}
+            {numberField("漏采补记窗口（小时，1–72）", "漏采补记窗口小时数", "missedWindowHours", 1, 72)}
+          </div>
+        </section>
+        <section className="monitor-group">
+          <span className="monitor-group-title">桌面小组件</span>
+          <label className="monitor-field monitor-field--check">
+            <input
+              type="checkbox"
+              checked={widgetTasks}
+              onChange={(event) => {
+                const next = event.target.checked;
+                localStorage.setItem("metrik:tasksWidget", next ? "on" : "off");
+                setWidgetTasks(next);
+                // 独立小组件：勾选即开/关那扇常驻窗（幂等），不等下次启动。
+                setTasksWidgetWindow(next);
+                window.dispatchEvent(new Event("metrik-monitor-changed"));
+              }}
+            />
+            <span>在桌面显示任务小组件（独立小窗）</span>
+          </label>
+        </section>
         <button
           type="button"
           className="ledger-button ledger-button--primary"
@@ -4563,6 +4647,8 @@ function MonitorSettingsCard() {
       </div>
       <p className="gateway-hint">
         建议：同步 2–5 秒；无活动阈值 60–300 秒（北斗星位一轮思考加工具调用常超 30 秒，不宜过短）。
+        接力分段按"交接沉默"切：星位间交接一直连续，一轮跑多久都是同一段，只有沉默超过上限
+        （如中途等你确认）才切下一段；失败工作显示 = 展开面板保留最近失败多久。台账保留期到期自动清理。
       </p>
     </div>
   );
@@ -6238,7 +6324,10 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
       )}
       <footer className="tasks-hopcard-meta">
         <span>{name} · {state}</span>
-        <span>第 {index + 1}/{total} 跳{duration ? ` · ${duration}` : ""}</span>
+        {/* 单跳卡（横条会话行）没有"第几跳"语义，只留耗时 */}
+        {(total > 1 || duration) && (
+          <span>{total > 1 ? `第 ${index + 1}/${total} 跳` : ""}{total > 1 && duration ? " · " : ""}{duration}</span>
+        )}
       </footer>
     </div>
   );
@@ -6840,6 +6929,14 @@ export function App() {
       stopPromise.then((stop) => stop?.());
     };
   }, []);
+  // 主窗一键开/关任务小组件：与托盘/设置勾选同一条 Rust 通道（幂等 show/hide），
+  // 本窗先给即时反馈，Rust 广播回声后由上面的监听校准。
+  const handleToggleTasksWidget = useCallback(() => {
+    const next = !tasksWidgetEnabled;
+    setTasksWidgetEnabled(next);
+    localStorage.setItem("metrik:tasksWidget", next ? "on" : "off");
+    setTasksWidgetWindow(next);
+  }, [tasksWidgetEnabled]);
   // 独立常驻：设置开着且已配网关 → 启动时把任务小窗带起来（set 幂等，
   // 已存在只 show，绝不重建）。任务小窗自身不触发（它就是要被带起的那扇窗）。
   useEffect(() => {
@@ -7819,6 +7916,8 @@ export function App() {
           onOpenSources={() => setDrawerOpen(true)}
           onTogglePinned={handleTogglePinned}
           onToggleTransparent={handleToggleTransparent}
+          tasksWidgetEnabled={tasksWidgetEnabled}
+          onToggleTasksWidget={handleToggleTasksWidget}
           onExpand={handleWindowMode}
           onRefresh={handleForceRefresh}
           quotaAgent={activeQuotaAgent}
@@ -7855,6 +7954,8 @@ export function App() {
               onThemeChange={handleThemeChange}
               onToggleMode={handleWindowMode}
               onTogglePinned={handleTogglePinned}
+              tasksWidgetEnabled={tasksWidgetEnabled}
+              onToggleTasksWidget={handleToggleTasksWidget}
             />
           </>
         )}

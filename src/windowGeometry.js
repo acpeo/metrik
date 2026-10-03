@@ -173,8 +173,12 @@ function verticalStripHoverLayout({ railPosition, railSize, workArea, targetSize
 
   const workRight = workArea.x + workArea.width;
   const workBottom = workArea.y + workArea.height;
-  const railCenterX = railPosition.x + railSize.width / 2;
-  const side = railCenterX < workArea.x + workArea.width / 2 ? "left" : "right";
+  // 卡片固定朝胶卷左侧弹（Leo 2026-10-03 拍板，替代"朝屏幕中心"）：左侧放得下
+  // 整卡才朝左（side=right，窗口朝左扩、胶卷钉右缘不动）；胶囊贴左缘放不下时
+  // 退回朝右兜底（side=left），卡片不被屏幕边裁掉。
+  const side = railPosition.x + railSize.width - targetSize.width - margin >= workArea.x
+    ? "right"
+    : "left";
   const local = verticalStripHoverLocalLayout({
     targetHeight: targetSize.height,
     anchorY,

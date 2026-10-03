@@ -193,6 +193,34 @@ test("vertical strip hover stays inside the work area near the top-left", () => 
   );
 });
 
+test("vertical strip hover pops the card to the rail's left when there is room", () => {
+  assert.deepEqual(
+    verticalStripHoverLayout({
+      railPosition: { x: 400, y: 300 },
+      railSize: { width: 42, height: 260 },
+      workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+      targetSize: { width: 392, height: 320 },
+      anchorY: 69,
+      cardHeight: 280,
+    }),
+    { side: "right", x: 50, y: 240, cardCenter: 148, railOffsetY: 60 },
+  );
+});
+
+test("vertical strip hover falls back to the rail's right side near the left edge", () => {
+  assert.deepEqual(
+    verticalStripHoverLayout({
+      railPosition: { x: 120, y: 300 },
+      railSize: { width: 42, height: 260 },
+      workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+      targetSize: { width: 392, height: 320 },
+      anchorY: 69,
+      cardHeight: 280,
+    }),
+    { side: "left", x: 120, y: 240, cardCenter: 148, railOffsetY: 60 },
+  );
+});
+
 test("Wayland-local strip hover clamps the card and pointer without global coordinates", () => {
   assert.deepEqual(
     verticalStripHoverLocalLayout({

@@ -9,166 +9,12 @@ function isTauriRuntime() {
 
 export { isTauriRuntime };
 
-/// 演示数据：一组形态真实的多 Agent 协作任务（含 running / blocked / 终态）。
-function demoTasks() {
-  const now = Date.now();
-  const min = 60_000;
-  return [
-    {
-      taskId: "demo-1",
-      gateway: "本机",
-      runtime: "subagent",
-      status: "running",
-      title: "储能赛道竞品分析",
-      agentId: "tianxuan",
-      sessionKey: "agent:tianxuan:subagent:demo-1",
-      runId: "demo-run-1",
-      progressSummary: "已检索 23 篇研报，正在对比各家装机成本数据",
-      startedAtMs: now - 4 * min,
-      lastSeenMs: now - 12_000,
-      firstSeenMs: now - 5 * min,
-    },
-    {
-      taskId: "demo-2",
-      gateway: "本机",
-      runtime: "subagent",
-      status: "running",
-      title: "比亚迪年报现金流量表抽取",
-      agentId: "tianji",
-      sessionKey: "agent:tianji:subagent:demo-2",
-      runId: "demo-run-2",
-      progressSummary: "正在抽取 2025 年报现金流量表",
-      startedAtMs: now - 12 * min,
-      lastSeenMs: now - 40_000,
-      firstSeenMs: now - 13 * min,
-    },
-    {
-      taskId: "demo-3",
-      gateway: "VPS",
-      runtime: "cron",
-      status: "running",
-      title: "行情快照定时任务",
-      agentId: "tianshu",
-      sessionKey: "agent:tianshu:cron:demo-3:run:abc",
-      runId: "cron:demo-3:123:run:abc",
-      progressSummary: "正在抓取盘中行情 156/214",
-      startedAtMs: now - 2 * min,
-      lastSeenMs: now - 5_000,
-      firstSeenMs: now - 30 * min,
-    },
-    {
-      taskId: "demo-4",
-      gateway: "VPS",
-      runtime: "subagent",
-      status: "succeeded",
-      title: "收集宁德时代与比亚迪近两年公告要点",
-      agentId: "tianshu",
-      sessionKey: "agent:tianshu:subagent:demo-4",
-      childSessionKey: "agent:tianxuan:subagent:demo-1",
-      runId: "demo-run-1",
-      startedAtMs: now - 46 * min,
-      endedAtMs: now - 31 * min,
-      terminalSummary: "completed",
-      lastSeenMs: now - 31 * min,
-      firstSeenMs: now - 47 * min,
-    },
-    {
-      taskId: "demo-5",
-      gateway: "本机",
-      runtime: "cli",
-      status: "failed",
-      title: "文档导出",
-      agentId: "tianshu",
-      sessionKey: "agent:tianshu:main",
-      runId: "exec:demo-5",
-      startedAtMs: now - 3 * 60 * min,
-      endedAtMs: now - 2 * 60 * min,
-      error: "写入目标目录无权限",
-      lastSeenMs: now - 2 * 60 * min,
-      firstSeenMs: now - 3 * 60 * min,
-    },
-    {
-      taskId: "demo-6",
-      gateway: "本机",
-      runtime: "subagent",
-      status: "queued",
-      title: "首轮事实核查",
-      agentId: "tianquan",
-      runId: "demo-run-1",
-      firstSeenMs: now - 60_000,
-      lastSeenMs: now - 60_000,
-    },
-    {
-      taskId: "demo-7",
-      gateway: "本机",
-      runtime: "subagent",
-      status: "queued",
-      title: "撰写母稿",
-      agentId: "tianji",
-      runId: "demo-run-1",
-      firstSeenMs: now - 50_000,
-      lastSeenMs: now - 50_000,
-    },
-    {
-      taskId: "demo-8",
-      gateway: "本机",
-      runtime: "subagent",
-      status: "queued",
-      title: "终稿审核",
-      agentId: "tianquan",
-      runId: "demo-run-1",
-      firstSeenMs: now - 40_000,
-      lastSeenMs: now - 40_000,
-    },
-    {
-      taskId: "demo-9",
-      gateway: "本机",
-      runtime: "subagent",
-      status: "queued",
-      title: "配三张数据图",
-      agentId: "yuheng",
-      runId: "demo-run-1",
-      firstSeenMs: now - 30_000,
-      lastSeenMs: now - 30_000,
-    },
-    {
-      taskId: "demo-10",
-      gateway: "本机",
-      runtime: "subagent",
-      status: "queued",
-      title: "剪一条90秒短视频",
-      agentId: "kaiyang",
-      runId: "demo-run-1",
-      firstSeenMs: now - 20_000,
-      lastSeenMs: now - 20_000,
-    },
-    {
-      taskId: "demo-11",
-      gateway: "本机",
-      runtime: "subagent",
-      status: "queued",
-      title: "发布到三个平台",
-      agentId: "yaoguang",
-      runId: "demo-run-1",
-      firstSeenMs: now - 10_000,
-      lastSeenMs: now - 10_000,
-    },
-  ];
-}
-
-/// 读任务列表：Tauri 下走 gateway_task_list；浏览器走演示数据。
+/// 读任务列表：Tauri 下走 gateway_task_list；浏览器演示给空——北斗的真实形态里
+/// 登记任务（cron/exec）几乎常闲，主力工作全在会话接力（loadSessionRuns 演示），
+/// 假任务堆数只会误导对 +N 角标和面板密度的判断。
 export async function loadGatewayTasks(status) {
   if (!isTauriRuntime()) {
-    const tasks = demoTasks();
-    return {
-      demo: true,
-      tasks:
-        status === "active"
-          ? tasks.filter((task) => task.status === "running" || task.status === "queued")
-          : status
-            ? tasks.filter((task) => task.status === status)
-            : tasks,
-    };
+    return { demo: true, tasks: [] };
   }
   try {
     const tasks = await invoke("gateway_task_list", { status: status ?? null, limit: 300 });
@@ -192,57 +38,93 @@ export async function refreshGatewayTasks(gateways) {
 }
 
 /// 读会话工作台账：群聊派活等会话 run 的结构化记录（session_run 表）。
-/// 浏览器预览走演示数据（形态对齐 2026-10-03 真机探测：天枢跑着、天璇失败）。
+/// 浏览器预览走演示数据：形态 = 北斗的一轮真实接力（Leo 派活天枢 → 天璇研究 →
+/// 天权初审 → 天玑 502 失败补发中），外加一个并行定时任务——这才是 +N 角标
+/// 在真实链路里的典型读数（通常 0~1，不会是堆出来的 +10）。
 export async function loadSessionRuns() {
   if (!isTauriRuntime()) {
     const now = Date.now();
     const min = 60_000;
+    const run = (overrides) => ({
+      gateway: "vps",
+      model: "gpt-6",
+      progressSummary: null,
+      error: null,
+      endedAtMs: null,
+      ...overrides,
+    });
     return {
       demo: true,
       runs: [
-        {
+        // ── 一轮接力：同一群聊（chatId 相同），按真实时序一格格长出来 ──
+        run({
           id: 1,
-          gateway: "vps",
-          sessionKey: "agent:tianshu:feishu:group:oc_demo",
+          sessionKey: "agent:tianshu:feishu:group:oc_demo_relay",
           agentId: "tianshu",
-          status: "running",
-          title: "对比两份「天璇选pt研究-OpenAI智能体越权.md」，确认补发后的最终版",
-          progressSummary: "md5 对比两份同名文件",
-          model: "gpt-6",
-          startedAtMs: now - 5_000,
-          endedAtMs: null,
-          firstSeenMs: now - 5_000,
-          lastSeenMs: now - 2_000,
-        },
-        {
+          status: "done",
+          title: "「热点选题测试-20261003」完整走一遍北斗链路，从天璇开始",
+          startedAtMs: now - 26 * min,
+          endedAtMs: now - 24 * min,
+          firstSeenMs: now - 26 * min,
+          lastSeenMs: now - 24 * min,
+        }),
+        run({
           id: 2,
-          gateway: "vps",
-          sessionKey: "agent:tianxuan:feishu:group:oc_demo",
-          agentId: "tianxuan",
-          status: "failed",
-          title: "核对天璇产出落盘情况",
-          progressSummary: null,
-          model: "gpt-6",
-          error: "provider 502，未产出即回",
-          startedAtMs: now - 9 * min,
-          endedAtMs: now - 6 * min,
-          firstSeenMs: now - 9 * min,
-          lastSeenMs: now - 6 * min,
-        },
-        {
-          id: 3,
-          gateway: "vps",
-          sessionKey: "agent:tianxuan:feishu:group:oc_demo",
+          sessionKey: "agent:tianxuan:feishu:group:oc_demo_relay",
           agentId: "tianxuan",
           status: "done",
-          title: "收集近两年公告要点",
-          progressSummary: null,
-          model: "gpt-6",
-          startedAtMs: now - 60 * min,
-          endedAtMs: now - 58.5 * min,
-          firstSeenMs: now - 60 * min,
-          lastSeenMs: now - 58.5 * min,
-        },
+          title: "天璇，选题研究：OpenAI 智能体越权，产出研究 md 到 /tmp",
+          startedAtMs: now - 24 * min,
+          endedAtMs: now - 18 * min,
+          firstSeenMs: now - 24 * min,
+          lastSeenMs: now - 18 * min,
+        }),
+        run({
+          id: 3,
+          sessionKey: "agent:tianquan:feishu:group:oc_demo_relay",
+          agentId: "tianquan",
+          status: "done",
+          title: "天权，初审天璇的研究报告，给 PASS/FAIL 结论和强制约束",
+          startedAtMs: now - 17 * min,
+          endedAtMs: now - 13 * min,
+          firstSeenMs: now - 17 * min,
+          lastSeenMs: now - 13 * min,
+        }),
+        run({
+          id: 4,
+          sessionKey: "agent:tianji:feishu:group:oc_demo_relay",
+          agentId: "tianji",
+          status: "failed",
+          title: "天玑，按定稿标题直接动笔创作",
+          error: "provider 502，未产出即回",
+          startedAtMs: now - 9 * min,
+          endedAtMs: now - 8.5 * min,
+          firstSeenMs: now - 9 * min,
+          lastSeenMs: now - 8.5 * min,
+        }),
+        run({
+          id: 5,
+          sessionKey: "agent:tianji:feishu:group:oc_demo_relay",
+          agentId: "tianji",
+          status: "running",
+          title: "【补发·第1次】天玑，按定稿标题直接动笔创作，不要重读文档",
+          progressSummary: "write",
+          startedAtMs: now - 3 * min,
+          firstSeenMs: now - 3 * min,
+          lastSeenMs: now - 2_000,
+        }),
+        // ── 接力之外：并行定时任务（无 :group: 前缀，不进这段胶卷）→ +1 ──
+        run({
+          id: 6,
+          sessionKey: "agent:yuheng:cron:demo-review",
+          agentId: "yuheng",
+          status: "running",
+          title: "定时任务：skill-collection-review",
+          progressSummary: "exec",
+          startedAtMs: now - 20 * min,
+          firstSeenMs: now - 20 * min,
+          lastSeenMs: now - 2_000,
+        }),
       ],
     };
   }
@@ -314,7 +196,15 @@ export async function loadAgentsSnapshot(gateways) {
     };
   }
   try {
-    const payload = await invoke("gateway_agents_snapshot", { gateways });
+    // 台账口径随拍下发：保留期/漏采补记窗口在设置页可调（Rust 侧再夹一次范围）。
+    const monitor = loadMonitorConfig();
+    const payload = await invoke("gateway_agents_snapshot", {
+      gateways,
+      ledger: {
+        retentionDays: monitor.ledgerRetentionDays,
+        missedWindowHours: monitor.missedWindowHours,
+      },
+    });
     return { demo: false, agents: payload?.agents ?? [], sessions: payload?.sessions ?? [] };
   } catch (error) {
     return { demo: false, agents: [], sessions: [], loadError: String(error) };
@@ -337,9 +227,20 @@ export function loadMonitorConfig() {
     return {
       refreshIntervalSec: clampNumber(raw.refreshIntervalSec, 3, 1, 60),
       staleThresholdSec: clampNumber(raw.staleThresholdSec, 120, 10, 3600),
+      episodeGapMin: clampNumber(raw.episodeGapMin, 60, 5, 720),
+      failedWindowH: clampNumber(raw.failedWindowH, 24, 1, 168),
+      ledgerRetentionDays: clampNumber(raw.ledgerRetentionDays, 7, 1, 90),
+      missedWindowHours: clampNumber(raw.missedWindowHours, 1, 1, 72),
     };
   } catch {
-    return { refreshIntervalSec: 3, staleThresholdSec: 120 };
+    return {
+      refreshIntervalSec: 3,
+      staleThresholdSec: 120,
+      episodeGapMin: 60,
+      failedWindowH: 24,
+      ledgerRetentionDays: 7,
+      missedWindowHours: 1,
+    };
   }
 }
 
@@ -347,6 +248,10 @@ export function saveMonitorConfig(config) {
   const clean = {
     refreshIntervalSec: clampNumber(config.refreshIntervalSec, 3, 1, 60),
     staleThresholdSec: clampNumber(config.staleThresholdSec, 120, 10, 3600),
+    episodeGapMin: clampNumber(config.episodeGapMin, 60, 5, 720),
+    failedWindowH: clampNumber(config.failedWindowH, 24, 1, 168),
+    ledgerRetentionDays: clampNumber(config.ledgerRetentionDays, 7, 1, 90),
+    missedWindowHours: clampNumber(config.missedWindowHours, 1, 1, 72),
   };
   localStorage.setItem(MONITOR_KEY, JSON.stringify(clean));
   if (typeof window !== "undefined") {
