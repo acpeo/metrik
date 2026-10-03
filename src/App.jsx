@@ -1,4 +1,5 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -43,7 +44,6 @@ import cursorAppIcon from "./assets/cursor-app-icon.png";
 import deepseekAppIcon from "./assets/deepseek-app-icon.png";
 import hermesAppIcon from "./assets/hermes-app-icon.png";
 import kimiAppIcon from "./assets/kimi-app-icon.png";
-import openclawAppIcon from "./assets/openclaw-app-icon.png";
 import opencodeAppIcon from "./assets/opencode-app-icon.png";
 import qoderAppIcon from "./assets/qoder-app-icon.png";
 import grokAppIcon from "./assets/grok-app-icon.png";
@@ -125,6 +125,8 @@ import {
   updateTrayQuotaBadge,
   setWindowGlass,
   setTasksWidgetWindow,
+  expandTasksHover,
+  collapseTasksHover,
   showMainExpanded,
   emitGlassTint,
   onGlassTintChanged,
@@ -274,16 +276,6 @@ const AGENT_META = {
     iconSrc: hermesAppIcon,
     iconClass: "agent-icon--hermes",
   },
-  openclaw: {
-    // OpenClaw 网关是 harness：卡片只记本地解析的会话用量（含挂载进来的
-    // VPS 数据），没有本地套餐概念，不显示配额；任务/额度走 Gateway 接口
-    // （另行设计）。
-    label: "OpenClaw",
-    // 中性墨绿灰：OpenClaw 品牌是深色螯形，与 GLM 的青、pi 的银灰拉开。
-    accent: "#5f7a6a",
-    iconSrc: openclawAppIcon,
-    iconClass: "agent-icon--openclaw",
-  },
   cursor: {
     // 用量取 cursor.com 仪表盘的账号级逐次事件，配额取同一仪表盘的套餐余量
     // （账单周期窗口）；两者都需在设置的数据来源页开启。
@@ -331,6 +323,12 @@ const STRIP_DETAIL_WINDOW_WIDTH = 312;
 const STRIP_DETAIL_CARD_MARGIN = 12;
 const STRIP_DETAIL_LEAVE_DELAY = 180;
 const STRIP_VCELL_HEIGHT = 46;
+// 任务小组件竖条悬停详情卡：展开窗 = 42 胶卷 + 卡片宽 + 间隙；卡片高度为
+// 估算值（布局 helper 只用它做贴边居中钳制，实际高度由内容决定）。
+const TASKS_HOPCARD_WIDTH = 224;
+const TASKS_HOPCARD_HEIGHT = 168;
+const TASKS_HOPCARD_GAP = 6;
+const TASKS_HOVER_LEAVE_DELAY = 260;
 // 横条宽度的收缩迟滞。一格 54px，所以 6px 远低于「真的少了一个 Agent」，
 // 又高于 DPI/zoom 取整带来的亚像素噪声。
 const STRIP_WIDTH_SHRINK_SLACK = 6;
@@ -368,15 +366,32 @@ function measureStripVerticalContent(shell) {
 /// 有无固定键都会变）。横条格子 flex:1 会拉伸填满窗口，布局测量推不出
 /// "窗口过宽"，所以格数部分必须用设计宽计算，窗口才能随格数增减伸缩。
 function measureStripHorizontalTarget(shell) {
+  const rail = shell.querySelector(".strip-rail");
   const controls = shell.querySelector(".strip-controls");
-  if (!controls) return null;
+  if (!rail || !controls) return null;
+  // 量真实内容（与竖条同一哲学）：格子是 flex:none 内容宽，"--" 格比百分比格
+  // 窄 ~10px——旧的 N×54 公式量不出这个差，窗口恒比内容宽出一截堆在右边，
+  // 且观察器量公式对窗口永远相等、从不修正（实机横条右侧空块根因）。
+  const children = [...rail.children];
+  const measured = children.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0);
+  if (measured > 0) {
+    const style = window.getComputedStyle(shell);
+    const railGap = parseFloat(window.getComputedStyle(rail).columnGap) || 0;
+    return (
+      measured
+      + Math.max(0, children.length - 1) * railGap
+      + (parseFloat(style.paddingLeft) || 0)
+      + (parseFloat(style.paddingRight) || 0)
+      + 1
+    );
+  }
+  // 兜底：rail 尚未布局（首帧极端情况）时退回公式估计。
   const style = window.getComputedStyle(shell);
   const cellCount = Math.max(1, shell.querySelectorAll(".strip-cell").length);
-  const controlsWidth = controls.getBoundingClientRect().width;
   return horizontalStripTargetWidth({
     cellCount,
     cellWidth: STRIP_CELL_WIDTH,
-    controlsWidth,
+    controlsWidth: controls.getBoundingClientRect().width,
     paddingLeft: parseFloat(style.paddingLeft),
     paddingRight: parseFloat(style.paddingRight),
     gap: parseFloat(style.columnGap || style.gap) || 0,
@@ -1926,6 +1941,71 @@ function TasksWidgetWindow({
   // 延时关闭回调里读的是注册时刻的闭包，方向要经 ref 取最新值。
   const miniOrientationRef = useRef("horizontal");
   miniOrientationRef.current = miniOrientation;
+  // 竖条悬停详情卡：hoverCard = { hop, index, total, center, windowY, layout }。
+  // center = 跳中心相对胶卷容器的 y；windowY = 相对窗口的 y（扩窗几何用）；
+  // layout = expandTasksHover 的返回（浏览器预览为 null，卡片照常渲染）。
+  const [hoverCard, setHoverCard] = useState(null);
+  const railWrapRef = useRef(null);
+  const hopCardLeaveTimerRef = useRef(null);
+  const showHopCard = (hop, index, total, event) => {
+    window.clearTimeout(hopCardLeaveTimerRef.current);
+    const cell = event.currentTarget.getBoundingClientRect();
+    const wrap = railWrapRef.current?.getBoundingClientRect();
+    const center = wrap ? cell.top + cell.height / 2 - wrap.top : cell.top + cell.height / 2;
+    setHoverCard({
+      hop,
+      index,
+      total,
+      center,
+      windowY: wrap ? wrap.top + center : cell.top,
+      // 预览态（扩窗 no-op）卡片用 fixed 定位逃出壳的 overflow 裁剪，记下胶卷右缘
+      wrapRight: wrap ? wrap.right : cell.right,
+      layout: null,
+    });
+  };
+  const hideHopCard = () => {
+    window.clearTimeout(hopCardLeaveTimerRef.current);
+    hopCardLeaveTimerRef.current = window.setTimeout(() => {
+      hopCardLeaveTimerRef.current = null;
+      // 指针可能只是移到卡片上（卡片在壳界内）：还悬着就不收
+      if (miniShellRef.current?.matches(":hover")) return;
+      setHoverCard(null);
+      runWindowAction(() => collapseTasksHover());
+    }, TASKS_HOVER_LEAVE_DELAY);
+  };
+  // 悬停展开：跳变化重算布局（tasksHoverRestore 保持原始几何），窗口贴边
+  // 由几何 helper 选择卡片朝屏幕中心一侧。浏览器预览 expand 返回 null。
+  const hoverHopKey = hoverCard ? `${hoverCard.hop.taskId}:${hoverCard.index}` : "";
+  useLayoutEffect(() => {
+    if (!hoverCard) return undefined;
+    let cancelled = false;
+    runWindowAction(async () => {
+      const layout = await expandTasksHover({
+        width: 42 + TASKS_HOPCARD_WIDTH + TASKS_HOPCARD_GAP,
+        height: miniControlsOpen ? 376 : 224,
+        anchorY: hoverCard.windowY,
+        cardHeight: TASKS_HOPCARD_HEIGHT,
+      });
+      if (!cancelled && layout) {
+        setHoverCard((current) => (current ? { ...current, layout } : current));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hoverHopKey]);
+  // 胶囊形态切换/控制开合会重设原生窗几何：先收卡片再走它们的事务。
+  useEffect(() => {
+    if (!hoverCard) return undefined;
+    setHoverCard(null);
+    runWindowAction(() => collapseTasksHover());
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsed, miniControlsOpen, miniOrientation]);
+  useEffect(() => () => {
+    window.clearTimeout(hopCardLeaveTimerRef.current);
+  }, []);
   const tasks = feed.tasks?.tasks || [];
   const active = tasks.filter(isActiveTask);
   const now = Date.now();
@@ -1997,6 +2077,25 @@ function TasksWidgetWindow({
     runWindowAction(() => resizeCurrentWindow(dims.width, dims.height));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapsed, miniControlsOpen, miniOrientation]);
+  // 详情卡定位（唯一路径，Portal+fixed）：横向——真机由几何 helper 自动朝屏幕
+  // 中心（side=left 卡在胶卷右、side=right 卡在左），预览无屏幕概念默认卡在左；
+  // 纵向——锚在悬停跳中心，钳在视口内。间距 6px：浮层与锚点"分开但不疏远"，
+  // 12px 在 42px 窄条旁显得松散。坐标取胶卷容器的实时视口矩形，扩窗移动
+  // 窗口后 React 重渲染时拿到的是新几何，无需手算偏移。
+  const hopCardStyle = (() => {
+    if (!hoverCard) return null;
+    const railRect = railWrapRef.current?.getBoundingClientRect();
+    const side = hoverCard.layout?.side ?? "right";
+    const left = railRect
+      ? side === "left"
+        ? railRect.right + TASKS_HOPCARD_GAP
+        : railRect.left - TASKS_HOPCARD_WIDTH - TASKS_HOPCARD_GAP
+      : hoverCard.wrapRight + TASKS_HOPCARD_GAP;
+    const half = TASKS_HOPCARD_HEIGHT / 2 + 4;
+    const rawTop = hoverCard.layout ? hoverCard.layout.cardCenterY : hoverCard.windowY;
+    const top = Math.min(Math.max(rawTop, half), Math.max(window.innerHeight - half, half));
+    return { top: Math.round(top), left: Math.round(left), transform: "translateY(-50%)" };
+  })();
   if (collapsed) {
     const miniVertical = miniOrientation === "vertical";
     const MiniOrientationIcon = miniVertical ? ArrowsLeftRight : ArrowsDownUp;
@@ -2075,17 +2174,44 @@ function TasksWidgetWindow({
           }}
         >
           {miniVertical ? (
-            // 竖条 = 链路胶卷竖放：当前执行 agent 垂直居中，滚轮上下滑（与横条对称）
+            // 竖条 = 链路胶卷竖放：当前执行 agent 垂直居中，滚轮上下滑（与横条对称）。
+            // 胶卷包一层 42px 定位容器：悬停跳时详情卡浮在靠屏幕中心一侧（原生窗
+            // 由 expandTasksHover 临时扩宽，pointer 离开 260ms 后还原）。
             miniRows.length > 0 ? (
-              <ChainFilmstrip
-                vertical
-                hops={chainHopsFor(miniRows[0].task, chainIndex)}
-                currentTaskId={miniRows[0].task.taskId}
-                agentNameMap={agentNameMap}
-                onExpand={expand}
-              />
+              <div
+                ref={railWrapRef}
+                className={`tasks-mini-railwrap${hoverCard?.layout ? ` tasks-mini--hover-${hoverCard.layout.side}` : ""}`}
+                onPointerLeave={hideHopCard}
+              >
+                <ChainFilmstrip
+                  vertical
+                  hops={chainHopsFor(miniRows[0].task, chainIndex)}
+                  currentTaskId={miniRows[0].task.taskId}
+                  agentNameMap={agentNameMap}
+                  onExpand={expand}
+                  onHopHover={showHopCard}
+                />
+                {hoverCard &&
+                  // 唯一路径：卡片恒 Portal 到 body 用 fixed 定位。真机扩窗后视口=
+                  // 扩窗，坐标一致；预览扩窗 no-op 也同样可见（不被壳的裁剪吞掉）。
+                  // 侧别：真机由几何 helper 自动朝屏幕中心；预览默认卡在胶卷左侧。
+                  createPortal(
+                    <HopHoverCard
+                      hop={hoverCard.hop}
+                      index={hoverCard.index}
+                      total={hoverCard.total}
+                      agentNameMap={agentNameMap}
+                      currentTaskId={miniRows[0].task.taskId}
+                      style={hopCardStyle}
+                    />,
+                    document.body,
+                  )}
+              </div>
             ) : (
-              <span className="tasks-mini-empty">{feed.live ? "暂无运行中任务" : "未同步"}</span>
+              // 竖条空态：文字竖排，横排文本在 42px 窄条里会一字一行摞下来
+              <span className="tasks-mini-empty tasks-mini-empty--vertical">
+                {feed.live ? "暂无运行中任务" : "未同步"}
+              </span>
             )
           ) : (
             // 横条 = 跑马灯：只显示第一个任务，多了用 +N 提示
@@ -2122,20 +2248,16 @@ function TasksWidgetWindow({
             </span>
             {miniControlsOpen && (
               <>
+                {/* 3 秒自动轮询下强制刷新无感，这个槽位让给外观切换：
+                    迷你胶囊才是常驻形态，融壁纸不该先展开再切 */}
                 <button
                   type="button"
-                  className="strip-button"
-                  onClick={() => {
-                    if (refreshing) return;
-                    setRefreshing(true);
-                    feed.refresh?.();
-                    window.setTimeout(() => setRefreshing(false), 900);
-                  }}
-                  disabled={refreshing}
-                  aria-label="强制刷新任务"
-                  title="强制刷新任务"
+                  className={`strip-button ${transparent ? "strip-button--active" : ""}`}
+                  onClick={onCycleAppearance}
+                  aria-label={`切到${glassTint === "dark" ? "浅色" : glassTint === "light" ? "透明" : "深色"}`}
+                  title={`切到${glassTint === "dark" ? "浅色" : glassTint === "light" ? "透明" : "深色"}`}
                 >
-                  <ArrowsClockwise size={15} weight="light" aria-hidden="true" />
+                  <CircleHalfTilt size={15} weight={transparent ? "fill" : "light"} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -5642,8 +5764,7 @@ function TaskStatusPill({ status }) {
 /// 跑马灯链路胶卷：当前执行 agent 恒定居中，链条两侧延伸出屏，
 /// 滚轮左右滑看前后跳（用户点名交互）。数据变化时重新居中，手动滚后尊重用户
 /// 位置直到下一次数据变化。边缘渐隐提示还有内容。
-function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, onExpand }) {
-  const stripRef = useRef(null);
+function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, onExpand, onHopHover }) {  const stripRef = useRef(null);
   const currentRef = useRef(null);
   const currentKey = `${currentTaskId ?? ""}:${hops.length}`;
   useLayoutEffect(() => {
@@ -5722,7 +5843,11 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
             }
           : undefined
       }
-      title="点击展开任务追踪 · 滚轮或按住拖动查看链路"
+      title={
+        onHopHover
+          ? undefined
+          : "点击展开任务追踪 · 滚轮或按住拖动查看链路"
+      }
       onWheel={(event) => {
         const target = event.currentTarget;
         // 行模式滚轮（deltaMode 1，deltaY≈3）按行高归一，否则一格只挪 3px；
@@ -5744,7 +5869,13 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
             <span
               ref={tone === "current" ? currentRef : undefined}
               className={`task-chain-hop task-chain-hop--${tone}`}
-              title={`${name} · ${state}${duration ? ` · ${duration}` : ""}`}
+              // 悬停详情卡接管提示时撤掉原生 title，避免两层气泡叠出
+              title={
+                onHopHover
+                  ? undefined
+                  : `${name} · ${state}${duration ? ` · ${duration}` : ""}`
+              }
+              onPointerEnter={onHopHover ? (event) => onHopHover(hop, index, hops.length, event) : undefined}
             >
               <span className="task-chain-glyph" aria-hidden="true">{hopGlyphOf(tone)}</span>
               <span className="task-chain-agent">{name}</span>
@@ -5754,6 +5885,38 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
         );
       })}
     </span>
+  );
+}
+
+/// 任务小组件竖条悬停详情卡：跳名 + 状态徽标 + 进度摘要原话 + 星名/链路位置/耗时。
+/// 只在竖条迷你胶囊启用（onHopHover opt-in），原生窗口临时扩宽由 windowClient 的
+/// expandTasksHover 承担；pointer-events:none 纯展示，不截断胶卷的指针进出。
+function HopHoverCard({ hop, index, total, agentNameMap, currentTaskId, style }) {
+  const { tone, state } = hopToneOf(hop, currentTaskId);
+  const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
+  const duration = formatCompactDuration(hop.startedAtMs, hop.endedAtMs);
+  return (
+    <div
+      className="tasks-hopcard"
+      style={style}
+      role="tooltip"
+    >
+      <header className="tasks-hopcard-head">
+        <strong className="tasks-hopcard-title">{hop.title || hop.taskId}</strong>
+        <TaskStatusPill status={hop.status} />
+      </header>
+      {hop.status === "running" && hop.progressSummary ? (
+        <p className="tasks-hopcard-progress">
+          <em>正在：</em>
+          {hop.progressSummary}
+        </p>
+      ) : null}
+      {tone === "failed" && hop.error ? <p className="tasks-hopcard-error">{hop.error}</p> : null}
+      <footer className="tasks-hopcard-meta">
+        <span>{name} · {state}</span>
+        <span>第 {index + 1}/{total} 跳{duration ? ` · ${duration}` : ""}</span>
+      </footer>
+    </div>
   );
 }
 
@@ -6689,6 +6852,11 @@ export function App() {
         await restoreWindowPosition("compact");
         await applyStartupUiScale("compact");
       });
+    }
+    // 任务追踪独立小组件同样回上次摆放的位置；没存过（首次）就停在
+    // Rust 侧锚的主窗右缘外 8px。
+    if (viewMode === "tasks-widget") {
+      runWindowAction(() => restoreWindowPosition("tasks-widget"));
     }
   }, []);
 

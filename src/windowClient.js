@@ -26,6 +26,9 @@ const WINDOW_SIZES = {
   // Agent 只留一行时卡片允许收短，不再空一截（高度仍由内容自愈驱动）。
   compact: { width: 320, height: 320, minWidth: 320, minHeight: 260 },
   expanded: { width: 1120, height: 760, minWidth: 960, minHeight: 700 },
+  // 任务追踪独立小组件的展开态尺寸（迷你胶囊的收放只在会话内发生，
+  // 恢复永远从展开态起步）。
+  "tasks-widget": { width: 320, height: 384 },
   // 横条高 28（26px 控件槽 + 呼吸），竖条宽 42：最小尺寸必须低于两者，
   // 否则窗口卡在下限上，内容测量再准也收不回去。
   strip: { width: 240, height: 28, minWidth: 28, minHeight: 28 },
@@ -493,14 +496,17 @@ async function reconcileFloatingSizeAfterShow(
 }
 
 // compact 与横/竖胶囊条各自记位，互不覆盖；expanded 不记位。
+// 任务追踪独立小组件同样记位：用户拖到哪，下次启动就在哪。
 const POSITION_KEYS = {
   compact: "metrik:widgetPosition",
   "strip-horizontal": "metrik:stripHorizontalPosition",
   "strip-vertical": "metrik:stripVerticalPosition",
+  "tasks-widget": "metrik:tasksWidgetPosition",
 };
 
 const lastPositions = {
   compact: null,
+  "tasks-widget": null,
   "strip-horizontal": null,
   "strip-vertical": null,
 };
@@ -675,6 +681,13 @@ async function onMacAgentSelection(handler) {
 }
 
 /// 拖动结束后持久化窗口位置（compact 与 strip 各记各的；expanded 不记）。
+// 任务小组件参与位置记忆但不参与边缘挂靠（canDock 仍用 isStableFloatingMode）：
+// 它有自己的置顶/显隐语义，"拖到屏幕上缘就藏起来"不是它的行为。
+function positionMemoAllowed(mode, transient) {
+  if (mode === "tasks-widget") return !transient;
+  return isStableFloatingMode(mode, transient);
+}
+
 async function startPositionMemory(getMode) {
   if (isMacPlatform() || (isLinuxPlatform() && !(await supportsGlobalWindowCoordinates()))) {
     return () => {};
@@ -685,10 +698,10 @@ async function startPositionMemory(getMode) {
   let timer = null;
   const unlistenPromise = appWindow.onMoved(() => {
     const mode = getMode();
-    if (!POSITION_KEYS[mode] || !isStableFloatingMode(mode, Boolean(stripHoverRestore))) return;
+    if (!POSITION_KEYS[mode] || !positionMemoAllowed(mode, Boolean(stripHoverRestore))) return;
     window.clearTimeout(timer);
     timer = window.setTimeout(() => {
-      if (!isStableFloatingMode(getMode(), Boolean(stripHoverRestore))) return;
+      if (!positionMemoAllowed(getMode(), Boolean(stripHoverRestore))) return;
       rememberWindowPosition(api, appWindow, mode).catch(() => {});
     }, 400);
   });
@@ -1169,6 +1182,69 @@ async function collapseVerticalStripHover() {
   if (restore.position) mutations.push(appWindow.setPosition(restore.position).catch(() => {}));
   await Promise.all(mutations);
   rememberStripSize(restore.width, restore.height);
+}
+
+/// 任务小组件竖条悬停详情卡：临时扩宽原生窗（卡片浮在胶卷靠屏幕中心一侧），
+/// 移开还原。与胶囊条 expandVerticalStripHover 共用同一几何 helper，但不读
+/// 条身缩放（任务窗不参与 stripScale）、不写条身尺寸缓存——那是另一个窗的记忆。
+let tasksHoverRestore = null;
+
+async function expandTasksHover({ width, height, anchorY, cardHeight }) {
+  if (!isWindowsPlatform()) return null;
+  const api = await windowApi();
+  if (!api) return null;
+  const appWindow = api.getCurrentWindow();
+  const [position, size, monitor, factor] = await Promise.all([
+    appWindow.outerPosition().catch(() => null),
+    appWindow.outerSize().catch(() => null),
+    api.currentMonitor().catch(() => null),
+    appWindow.scaleFactor().catch(() => 1),
+  ]);
+  const workArea = monitor?.workArea;
+  if (!size || !position || !workArea) return null;
+  if (!tasksHoverRestore) tasksHoverRestore = { position, size };
+  const base = tasksHoverRestore;
+  const scale = Number.isFinite(factor) && factor > 0 ? factor : 1;
+  const physical = await scaledPhysicalSize(api, appWindow, width, height, 1, scale);
+  const layout = verticalStripHoverLayout({
+    railPosition: base.position,
+    railSize: base.size,
+    workArea: {
+      x: workArea.position.x,
+      y: workArea.position.y,
+      width: workArea.size.width,
+      height: workArea.size.height,
+    },
+    targetSize: physical,
+    anchorY: anchorY * scale,
+    cardHeight: cardHeight * scale,
+    margin: 8 * scale,
+  });
+  if (!layout) return null;
+  await Promise.all([
+    appWindow.setSize(physical).catch(() => {}),
+    appWindow
+      .setPosition(new api.PhysicalPosition(Math.round(layout.x), Math.round(layout.y)))
+      .catch(() => {}),
+  ]);
+  return {
+    side: layout.side,
+    cardCenterY: layout.cardCenter / scale,
+    railOffsetY: layout.railOffsetY / scale,
+  };
+}
+
+async function collapseTasksHover() {
+  if (!isWindowsPlatform() || !tasksHoverRestore) return;
+  const restore = tasksHoverRestore;
+  tasksHoverRestore = null;
+  const api = await windowApi();
+  if (!api) return;
+  const appWindow = api.getCurrentWindow();
+  await Promise.all([
+    appWindow.setSize(restore.size).catch(() => {}),
+    restore.position ? appWindow.setPosition(restore.position).catch(() => {}) : Promise.resolve(),
+  ]);
 }
 
 /// 控制按钮就地展开会经 fit 观察器把窗口临时加高/加宽；展开前记下原生
@@ -1931,6 +2007,8 @@ export {
   setStripScale,
   setWindowGlass,
   setTasksWidgetWindow,
+  expandTasksHover,
+  collapseTasksHover,
   showMainExpanded,
   closeCurrentWindow,
   emitGlassTint,

@@ -1443,12 +1443,13 @@ fn spawn_tasks_widget_window(app: &tauri::AppHandle) -> Result<(), String> {
     .resizable(false)
     .skip_taskbar(true)
     .focused(false);
-    // 锚在主窗口右侧同一高度，别每次都飘到屏幕中央。主窗贴右/贴下时按当前
-    // 显示器收口，免得小组件整扇悬在屏幕外，看起来像"没弹出来"。
+    // 锚在主窗口右缘外 8px 同一高度（用主窗外框实宽，别再用写死的 356——
+    // 主窗本体就有 ~400px 宽，写死偏移会把小组件生在主窗身子上）。
+    // 贴右/贴下时按当前显示器收口，免得小组件整扇悬在屏幕外。
     if let Some(main) = app.get_webview_window("main") {
-        if let Ok(outer) = main.outer_position() {
+        if let (Ok(outer), Ok(outer_size)) = (main.outer_position(), main.outer_size()) {
             let scale = main.scale_factor().unwrap_or(1.0);
-            let mut x = (outer.x as f64 + 356.0) / scale;
+            let mut x = outer.x as f64 / scale + outer_size.width as f64 / scale + 8.0;
             let mut y = outer.y as f64 / scale;
             if let Ok(Some(monitor)) = main.current_monitor() {
                 let screen_w = monitor.size().width as f64 / scale;

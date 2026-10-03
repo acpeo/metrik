@@ -13,9 +13,7 @@ use std::path::PathBuf;
 /// hermes 只有本地用量：Hermes 是 harness，走别家 coding plan 的用量按路由
 /// 归属到对应卡片（见 hermes_providers），其余直连 API 留在这张卡。
 /// cursor 只有用量：取 cursor.com 仪表盘的账号级逐次事件，需在设置里开启。
-/// openclaw 只有本地用量：OpenClaw 网关没有本地套餐概念，用量按其 provider
-/// 保留在卡片上；配额接入走 Gateway WS 任务/状态接口（另行设计）。
-pub const AGENT_IDS: [&str; 15] = [
+pub const AGENT_IDS: [&str; 14] = [
     "codex",
     "claude",
     "zcode",
@@ -30,7 +28,6 @@ pub const AGENT_IDS: [&str; 15] = [
     "qwen",
     "hermes",
     "cursor",
-    "openclaw",
 ];
 
 /// 对外展示名，与桌面快照、CLI JSON 共用一份，避免各出口各自漂移。
@@ -50,7 +47,6 @@ pub fn agent_label(id: &str) -> &'static str {
         "qwen" => "Qwen",
         "hermes" => "Hermes",
         "cursor" => "Cursor",
-        "openclaw" => "OpenClaw",
         _ => "Agent",
     }
 }
