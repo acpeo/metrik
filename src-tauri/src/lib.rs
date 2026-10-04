@@ -2001,7 +2001,10 @@ async fn gateway_agents_snapshot(
     let scan_gate = Arc::clone(&state.scan_gate);
     let ledger_options = session_ledger_options(ledger.unwrap_or_default());
 
-    let payload = tauri::async_runtime::spawn_blocking(move || {
+    // 闭包显式标注错误类型：拆成 let 绑定后外层返回类型不再参与推断，
+    // 内层 Result<E> 悬空（E0282/E0283），锚成 String。
+    let payload = tauri::async_runtime::spawn_blocking(
+        move || -> Result<GatewayAgentsPayload, String> {
         let _gate = scan_gate
             .lock()
             .map_err(|_| "usage scan lock poisoned".to_owned())?;
@@ -2051,11 +2054,12 @@ async fn gateway_agents_snapshot(
                 Err(_) => { /* 单网关失败不阻塞其它网关 */ }
             }
         }
-        Ok(GatewayAgentsPayload {
-            agents: merged,
-            sessions: merged_sessions,
-        })
-    })
+            Ok(GatewayAgentsPayload {
+                agents: merged,
+                sessions: merged_sessions,
+            })
+        },
+    )
     .await
     .map_err(|error| format!("agents snapshot failed: {error}"))?;
     // spawn_blocking 闭包自身也返回 Result（内部有 ?）：上一行 ? 只解了
