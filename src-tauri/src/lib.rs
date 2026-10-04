@@ -2058,6 +2058,9 @@ async fn gateway_agents_snapshot(
     })
     .await
     .map_err(|error| format!("agents snapshot failed: {error}"))?;
+    // spawn_blocking 闭包自身也返回 Result（内部有 ?）：上一行 ? 只解了
+    // JoinHandle 外层，这里解内层——错误同为 String，直接透传。
+    let payload = payload?;
     // 星名映射广播：提醒窗是独立 webview（localStorage 不共享），失败文案
     // 要中文名——权威源就在本快照里，顺手广播（小载荷、幂等，emit 回到发送
     // 方也无妨，监听方内容相同不刷新）。
