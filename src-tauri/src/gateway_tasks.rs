@@ -1208,7 +1208,9 @@ pub fn snapshot_gateway_crons_throttled(
     last_fetch: &mut Option<(String, Instant)>,
 ) -> Result<usize> {
     if let Some((label, at)) = last_fetch {
-        if label == &target.label && at.elapsed() < Duration::from_millis(CRON_SNAPSHOT_MIN_INTERVAL_MS) {
+        if label == &target.label
+            && at.elapsed() < Duration::from_millis(CRON_SNAPSHOT_MIN_INTERVAL_MS)
+        {
             return Ok(0);
         }
     }

@@ -2003,65 +2003,65 @@ async fn gateway_agents_snapshot(
 
     // 闭包显式标注错误类型：拆成 let 绑定后外层返回类型不再参与推断，
     // 内层 Result<E> 悬空（E0282/E0283），锚成 String。
-    let payload = tauri::async_runtime::spawn_blocking(
-        move || -> Result<GatewayAgentsPayload, String> {
-        let _gate = scan_gate
-            .lock()
-            .map_err(|_| "usage scan lock poisoned".to_owned())?;
-        let connection =
-            storage::open_database(&database_path).map_err(|error| error.to_string())?;
-        let mut merged: Vec<gateway_tasks::AgentActivity> = Vec::new();
-        let mut merged_sessions: Vec<gateway_tasks::SessionUsage> = Vec::new();
-        for target in &gateways {
-            let gw = gateway_tasks::GatewayTarget {
-                label: target.label.clone(),
-                url: target.url.clone(),
-                token: target.token.clone(),
-                identity_dir: target.identity_dir.clone(),
-            };
-            // 复用任务快照的节流逻辑：agents 快照与任务快照共享同一网关连接
-            // 成本，这里独立节流窗口。带连接 → 顺带把会话 run 记入本地台账。
-            match gateway_tasks::fetch_agents_snapshot(&gw, Some(&connection), &ledger_options) {
-                Ok(snapshot) => {
-                    for mut agent in snapshot.agents {
-                        agent.agent_id = format!("{}:{}", target.label, agent.agent_id);
-                        if let Some(existing) = merged
-                            .iter_mut()
-                            .find(|existing| existing.agent_id == agent.agent_id)
-                        {
-                            existing.running_tasks += agent.running_tasks;
-                            existing.session_count += agent.session_count;
-                            if agent
-                                .last_active_ms
-                                .map(|new| {
-                                    existing.last_active_ms.map(|old| new > old).unwrap_or(true)
-                                })
-                                .unwrap_or(false)
+    let payload =
+        tauri::async_runtime::spawn_blocking(move || -> Result<GatewayAgentsPayload, String> {
+            let _gate = scan_gate
+                .lock()
+                .map_err(|_| "usage scan lock poisoned".to_owned())?;
+            let connection =
+                storage::open_database(&database_path).map_err(|error| error.to_string())?;
+            let mut merged: Vec<gateway_tasks::AgentActivity> = Vec::new();
+            let mut merged_sessions: Vec<gateway_tasks::SessionUsage> = Vec::new();
+            for target in &gateways {
+                let gw = gateway_tasks::GatewayTarget {
+                    label: target.label.clone(),
+                    url: target.url.clone(),
+                    token: target.token.clone(),
+                    identity_dir: target.identity_dir.clone(),
+                };
+                // 复用任务快照的节流逻辑：agents 快照与任务快照共享同一网关连接
+                // 成本，这里独立节流窗口。带连接 → 顺带把会话 run 记入本地台账。
+                match gateway_tasks::fetch_agents_snapshot(&gw, Some(&connection), &ledger_options)
+                {
+                    Ok(snapshot) => {
+                        for mut agent in snapshot.agents {
+                            agent.agent_id = format!("{}:{}", target.label, agent.agent_id);
+                            if let Some(existing) = merged
+                                .iter_mut()
+                                .find(|existing| existing.agent_id == agent.agent_id)
                             {
-                                existing.last_active_ms = agent.last_active_ms;
+                                existing.running_tasks += agent.running_tasks;
+                                existing.session_count += agent.session_count;
+                                if agent
+                                    .last_active_ms
+                                    .map(|new| {
+                                        existing.last_active_ms.map(|old| new > old).unwrap_or(true)
+                                    })
+                                    .unwrap_or(false)
+                                {
+                                    existing.last_active_ms = agent.last_active_ms;
+                                }
+                                existing.active = existing.active || agent.active;
+                            } else {
+                                merged.push(agent);
                             }
-                            existing.active = existing.active || agent.active;
-                        } else {
-                            merged.push(agent);
+                        }
+                        for mut session in snapshot.sessions {
+                            // 跨网关 key 防撞：会话 key 加网关标签前缀。
+                            session.key = format!("{}:{}", target.label, session.key);
+                            merged_sessions.push(session);
                         }
                     }
-                    for mut session in snapshot.sessions {
-                        // 跨网关 key 防撞：会话 key 加网关标签前缀。
-                        session.key = format!("{}:{}", target.label, session.key);
-                        merged_sessions.push(session);
-                    }
+                    Err(_) => { /* 单网关失败不阻塞其它网关 */ }
                 }
-                Err(_) => { /* 单网关失败不阻塞其它网关 */ }
             }
-        }
             Ok(GatewayAgentsPayload {
                 agents: merged,
                 sessions: merged_sessions,
             })
-        },
-    )
-    .await
-    .map_err(|error| format!("agents snapshot failed: {error}"))?;
+        })
+        .await
+        .map_err(|error| format!("agents snapshot failed: {error}"))?;
     // spawn_blocking 闭包自身也返回 Result（内部有 ?）：上一行 ? 只解了
     // JoinHandle 外层，这里解内层——错误同为 String，直接透传。
     let payload = payload?;
