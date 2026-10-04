@@ -1105,8 +1105,7 @@ pub struct GatewayCronJob {
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CronSchedule {
-    #[serde(default)]
-    pub kind: Option<String>,
+    /// 只取表达式；kind 等其余字段 serde 自动忽略（clippy dead_code：不读不存）。
     #[serde(default)]
     pub expr: Option<String>,
 }
@@ -2185,7 +2184,6 @@ mod tests {
             description: Some(format!("{name} 描述")),
             enabled: Some(enabled),
             schedule: Some(CronSchedule {
-                kind: Some("cron".to_owned()),
                 expr: Some(expr.to_owned()),
             }),
         };
