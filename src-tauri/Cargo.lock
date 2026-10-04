@@ -2212,7 +2212,7 @@ dependencies = [
 
 [[package]]
 name = "metrik"
-version = "0.20.11"
+version = "0.20.12"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
