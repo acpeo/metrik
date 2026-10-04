@@ -2001,7 +2001,7 @@ async fn gateway_agents_snapshot(
     let scan_gate = Arc::clone(&state.scan_gate);
     let ledger_options = session_ledger_options(ledger.unwrap_or_default());
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let payload = tauri::async_runtime::spawn_blocking(move || {
         let _gate = scan_gate
             .lock()
             .map_err(|_| "usage scan lock poisoned".to_owned())?;
