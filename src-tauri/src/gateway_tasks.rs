@@ -1154,7 +1154,10 @@ fn record_session_runs(
         }
         // 标题回落链：chat.history 的派活原话取不到时（automation/cron 触发的
         // run 没有 user 消息），退到群名 / Automation 名，不再裸"会话工作"。
-        let fallback_title = session.subject.clone().or_else(|| session.display_name.clone());
+        let fallback_title = session
+            .subject
+            .clone()
+            .or_else(|| session.display_name.clone());
         let open: Option<i64> = connection
             .query_row(
                 "SELECT id FROM session_run \
