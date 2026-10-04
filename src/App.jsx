@@ -53,7 +53,7 @@ import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
 import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, loadSessionRuns, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
-import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions, sessionEpisodeHops, sessionRunHop } from "./taskChains.js";
+import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions, sessionErrorText, sessionEpisodeHops, sessionRunHop, toolProgressLabel } from "./taskChains.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow, isBalanceWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
@@ -1845,9 +1845,6 @@ function useWidgetTasksFeed(gateways, enabled) {
   const [lastSync, setLastSync] = useState(0);
   const [intervalSec, setIntervalSec] = useState(() => loadMonitorConfig().refreshIntervalSec);
   const [refreshTick, setRefreshTick] = useState(0);
-  const gatewaysRef = useRef(gateways);
-  gatewaysRef.current = gateways;
-
   // 设置页改监控参数（含保存开关触发的同一事件）后立即生效。
   useEffect(() => {
     const handler = () => setIntervalSec(loadMonitorConfig().refreshIntervalSec);
@@ -1857,11 +1854,14 @@ function useWidgetTasksFeed(gateways, enabled) {
 
   const gatewayKey = gateways.map((gateway) => gateway.label).join("|");
   useEffect(() => {
-    if (!enabled || !gateways.length) return undefined;
+    // 只看 enabled，不看 gateways：任务小窗是独立 webview，主窗保存的 Gateway
+    // 配置不会跨窗推事件（升级重建存储后"主窗重配、小窗先起于空配置"正是
+    // 0.20.11 真机翻车现场，重试也空转）。每拍现读配置，配置晚到自动捡起。
+    if (!enabled) return undefined;
     let alive = true;
     const tick = async () => {
       if (document.visibilityState === "hidden") return;
-      const current = gatewaysRef.current;
+      const current = loadGatewayConfig();
       if (!current.length) return;
       try {
         const result = await refreshGatewayTasks(current);
@@ -1978,6 +1978,9 @@ function TasksWidgetWindow({
   const [hoverCard, setHoverCard] = useState(null);
   const railWrapRef = useRef(null);
   const hopCardLeaveTimerRef = useRef(null);
+  // 扩窗时刻与最近一次卡片实测高：收卡宽限期与"单次悬停只扩一次窗"用。
+  const lastExpandAtRef = useRef(0);
+  const lastCardHRef = useRef(null);
   // 延时关闭回调里读的是注册时刻的闭包，卡片有无要经 ref 取最新值。
   const hoverCardRef = useRef(null);
   hoverCardRef.current = hoverCard;
@@ -2045,6 +2048,12 @@ function TasksWidgetWindow({
       hopCardLeaveTimerRef.current = null;
       // 指针可能只是移到卡片上（卡片在壳界内）：还悬着就不收
       if (miniShellRef.current?.matches(":hover")) return;
+      // 扩窗会瞬移窗口（含胶囊补偿），指针可能被甩出胶卷一瞬——刚扩完 500ms
+      // 内不收卡，宽限期后重新排队检查，杜绝"收窗→重进→再扩"的循环
+      if (Date.now() - lastExpandAtRef.current < 500) {
+        hideHopCard();
+        return;
+      }
       setHoverCard(null);
       runWindowAction(() => collapseTasksHover());
     }, TASKS_HOVER_LEAVE_DELAY);
@@ -2053,18 +2062,21 @@ function TasksWidgetWindow({
   // 168 只是基线估计，"其他进行中"节会更高。测量回调恒定，靠比较去重。
   const handleCardHeight = (height) => {
     if (!Number.isFinite(height) || height <= 0) return;
+    lastCardHRef.current = height;
     setHoverCard((current) =>
       current && current.measuredH !== height ? { ...current, measuredH: height } : current,
     );
   };
-  // 悬停展开：跳变化/卡高变化重算布局（tasksHoverRestore 保持原始几何）。
-  // 竖条窗口贴边由几何 helper 选择卡片朝屏幕中心一侧；横条向上长高。
+  // 悬停展开：每次悬停只扩一次窗（0.20.11 真机教训：卡高实测到达后重展 =
+  // 窗口带着胶囊再动一次，肉眼可见的上下/左右跳）。卡高用上一次实测值预估
+  // （跨悬停记忆，首悬停用基线），不再随实测重展——卡比窗高就裁一点，下次悬停自愈。
   const hoverHopKey = hoverCard ? `${hoverCard.hop.taskId}:${hoverCard.index}` : "";
-  const hoverCardH = hoverCard?.measuredH ?? null;
+  const hoverCardOpen = hoverCard != null;
   useLayoutEffect(() => {
     if (!hoverCard) return undefined;
     let cancelled = false;
-    const cardHeight = hoverCard.measuredH ?? TASKS_HOPCARD_HEIGHT;
+    const cardHeight = Math.max(TASKS_HOPCARD_HEIGHT, lastCardHRef.current ?? 0) + 24;
+    lastExpandAtRef.current = Date.now();
     runWindowAction(async () => {
       let layout = null;
       if (hoverCard.orientation === "horizontal") {
@@ -2077,7 +2089,7 @@ function TasksWidgetWindow({
       } else {
         layout = await expandTasksHover({
           width: 42 + TASKS_HOPCARD_WIDTH + TASKS_HOPCARD_GAP,
-          height: miniControlsOpen ? 376 : 224,
+          height: Math.max(miniControlsOpen ? 376 : 300, cardHeight),
           anchorY: hoverCard.windowY,
           cardHeight,
         });
@@ -2090,7 +2102,7 @@ function TasksWidgetWindow({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hoverHopKey, hoverCardH]);
+  }, [hoverHopKey, hoverCardOpen]);
   // 胶囊形态切换/控制开合会重设原生窗几何：先收卡片再走它们的事务。
   useEffect(() => {
     if (!hoverCard) return undefined;
@@ -2134,6 +2146,8 @@ function TasksWidgetWindow({
   // 接力分段阈值（设置页"实时监控参数"可调）：每拍渲染现读配置，保存后一个
   // 轮询周期内自然生效，不需要跨窗口事件。
   const episodeGapMs = loadMonitorConfig().episodeGapMin * 60_000;
+  // 进度/报错中文映射开关（设置页"实时监控参数"）：关 = 显示 openclaw 原文。
+  const translateProgress = loadMonitorConfig().translateProgress;
   const shellAppearance = glassShellAppearance("widget", {
     transparent,
     glassMode,
@@ -2196,7 +2210,7 @@ function TasksWidgetWindow({
           : agentDisplayName(agentNameMap, row.task.agentId) || row.task.agentId || "?";
       const text =
         row.kind === "session"
-          ? row.run.title || "会话工作"
+          ? row.run.title || row.run.fallbackTitle || "会话工作"
           : row.task.title || row.task.taskId;
       return `${name}·${text}${row.tone === "failed" ? "（失败）" : ""}`;
     })
@@ -2280,7 +2294,7 @@ function TasksWidgetWindow({
       // 状态点 + 星名 + 派活原话，悬停出单跳卡，卡接管后撤原生 title。
       if (kind === "session") {
         const agentName = agentDisplayName(agentNameMap, run.agentId);
-        const title = run.title || "会话工作";
+        const title = run.title || run.fallbackTitle || "会话工作";
         const failed = tone === "failed";
         const taskId = `session-run:${run.id ?? run.runId ?? run.sessionKey}`;
         const hops = feed.sessionRuns?.length ? sessionEpisodeHops(feed.sessionRuns, run) : [];
@@ -2295,7 +2309,7 @@ function TasksWidgetWindow({
             title={
               onHopHover && !hasEpisode
                 ? undefined
-                : `${agentName ? `${agentName} · ` : ""}${title}${failed && run.error ? `（${run.error}）` : ""} · 点击展开`
+                : `${agentName ? `${agentName} · ` : ""}${title}${failed && run.error ? `（${sessionErrorText(run.error, translateProgress)}）` : ""} · 点击展开`
             }
           >
             {hasEpisode ? (
@@ -2409,6 +2423,15 @@ function TasksWidgetWindow({
       >
         <div
           className={`tasks-mini${miniVertical ? " tasks-mini--vertical" : ""}`}
+          style={
+            hoverCard?.layout
+              ? miniVertical
+                ? // 窗口为容纳卡片上移了 railOffsetY：整条胶囊补回同值，屏上位置不动
+                  { paddingTop: `${hoverCard.layout.railOffsetY ?? 0}px` }
+                : // 横条窗口向上长高时内容顶锚会被整条抬走：卡在上方时锚到底边
+                  { justifyContent: hoverCard.layout.side === "above" ? "flex-end" : undefined }
+              : undefined
+          }
           onPointerDown={(event) => {
             if (event.button !== 0 || event.target.closest("button")) return;
             startWindowDragging();
@@ -2493,6 +2516,7 @@ function TasksWidgetWindow({
                 others={otherRows}
                 agentNameMap={agentNameMap}
                 currentTaskId={miniCurrentHopId}
+                translate={translateProgress}
                 // 卡片跟随壳的有效墨色（与 glassShellAppearance 的 --glass-light
                 // 判定同一条规则）：浅色档、透明档+深色字（白霜）→ 浅色卡；
                 // 深色档、透明档+白字（深 scrim）→ 深色卡。卡片 Portal 在 body
@@ -2624,7 +2648,7 @@ function TasksWidgetWindow({
         <span className="widget-task-main">
           <TaskStatusPill status={failed ? "failed" : "running"} />
           <span className="widget-task-title" title={run.title || ""}>
-            {run.title || "会话工作"}
+            {run.title || run.fallbackTitle || "会话工作"}
           </span>
           <span className="widget-session-flag">会话</span>
         </span>
@@ -2636,17 +2660,17 @@ function TasksWidgetWindow({
     const failed = run.status === "failed";
     const agentName = agentDisplayName(agentNameMap, run.agentId) || run.agentId || "";
     if (failed) {
-      const text = run.error || "run 失败";
+      const text = sessionErrorText(run.error, translateProgress) || "run 失败";
       return (
-        <p className="task-progress-line task-progress-line--error" title={text}>
+        <p className="task-progress-line task-progress-line--error" title={run.error || text}>
           {agentName ? `${agentName} · ` : ""}
           {text}
         </p>
       );
     }
-    const text = run.progressSummary || "会话工作中";
+    const text = toolProgressLabel(run.progressSummary, translateProgress) || "会话工作中";
     return (
-      <p className="task-progress-line" title={text}>
+      <p className="task-progress-line" title={run.progressSummary || text}>
         {agentName ? `${agentName} · ` : ""}
         <em>正在：</em>
         {text}
@@ -2799,6 +2823,7 @@ function TasksWidgetWindow({
                         hops={hops}
                         currentTaskId={task.taskId}
                         agentNameMap={agentNameMap}
+                        translate={translateProgress}
                       />
                     ))}
                 </div>
@@ -4572,7 +4597,8 @@ function MonitorSettingsCard() {
     Number(draft.episodeGapMin) !== current.episodeGapMin ||
     Number(draft.failedWindowH) !== current.failedWindowH ||
     Number(draft.ledgerRetentionDays) !== current.ledgerRetentionDays ||
-    Number(draft.missedWindowHours) !== current.missedWindowHours;
+    Number(draft.missedWindowHours) !== current.missedWindowHours ||
+    Boolean(draft.translateProgress) !== current.translateProgress;
 
   const apply = () => {
     saveMonitorConfig(draft);
@@ -4620,6 +4646,17 @@ function MonitorSettingsCard() {
         </section>
         <section className="monitor-group">
           <span className="monitor-group-title">桌面小组件</span>
+          <label className="monitor-field monitor-field--check">
+            <input
+              type="checkbox"
+              checked={draft.translateProgress}
+              aria-label="进度与报错中文显示"
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, translateProgress: event.target.checked }))
+              }
+            />
+            <span>进度与报错中文显示（映射 openclaw 工具名与常见报错）</span>
+          </label>
           <label className="monitor-field monitor-field--check">
             <input
               type="checkbox"
@@ -6255,7 +6292,7 @@ function ChainFilmstrip({ hops, currentTaskId, agentNameMap, vertical = false, o
 /// windowClient 的 expandTasksHover(Horizontal) 承担；pointer-events:none 纯
 /// 展示，不截断胶卷的指针进出。light = 跟随胶囊浅色外观（卡片 Portal 在
 /// body 下，壳的 glass-light 类够不到，得显式传）。
-function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, light, onHeight, style }) {
+function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, light, translate = true, onHeight, style }) {
   const { tone, state } = hopToneOf(hop, currentTaskId);
   const name = agentDisplayName(agentNameMap, hop.agentId) || hop.agentId || "?";
   const duration = formatCompactDuration(hop.startedAtMs, hop.endedAtMs);
@@ -6280,10 +6317,14 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
       {hop.status === "running" && hop.progressSummary ? (
         <p className="tasks-hopcard-progress">
           <em>正在：</em>
-          {hop.progressSummary}
+          {toolProgressLabel(hop.progressSummary, translate)}
         </p>
       ) : null}
-      {tone === "failed" && hop.error ? <p className="tasks-hopcard-error">{hop.error}</p> : null}
+      {tone === "failed" && hop.error ? (
+        <p className="tasks-hopcard-error" title={hop.error}>
+          {sessionErrorText(hop.error, translate)}
+        </p>
+      ) : null}
       {visibleOthers.length > 0 && (
         <div className="tasks-hopcard-extra">
           <span className="tasks-hopcard-extra-head">
@@ -6299,7 +6340,7 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
               ? `session-run:${row.run.id ?? row.run.sessionKey}`
               : `${row.task.gateway ?? ""}:${row.task.taskId}`;
             const text = isSession
-              ? row.run.title || "会话工作"
+              ? row.run.title || row.run.fallbackTitle || "会话工作"
               : row.task.title || row.task.taskId;
             const rowName = agentDisplayName(agentNameMap, agentId) || agentId || "?";
             const failed = row.tone === "failed";
@@ -6335,7 +6376,7 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
 
 /// 竖直链路时间线（展开卡）：一跳一行 = 状态符 + 星名 + 该跳任务 + 耗时，
 /// 当前跳行下挂任务进度原话。排队跳天然在列，任务列表里不再重复占行。
-function TaskChainTimeline({ hops, currentTaskId, agentNameMap }) {
+function TaskChainTimeline({ hops, currentTaskId, agentNameMap, translate = true }) {
   if (!hops || hops.length < 2) return null;
   return (
     <ol className="task-timeline">
@@ -6359,7 +6400,7 @@ function TaskChainTimeline({ hops, currentTaskId, agentNameMap }) {
             {current && hop.progressSummary ? (
               <p className="task-timeline-progress" title={hop.progressSummary}>
                 <em>正在：</em>
-                {hop.progressSummary}
+                {toolProgressLabel(hop.progressSummary, translate)}
               </p>
             ) : null}
           </li>

@@ -131,13 +131,63 @@ export function sessionRunHopStatus(status) {
   return "running";
 }
 
+/// openclaw 工具名 → 中文显示。台账保留原文，这里只管显示层；
+/// 未知工具透传原名（新工具不加表也能用，只是显示英文）。
+const TOOL_LABELS = {
+  web_search: "联网搜索",
+  web_fetch: "网页抓取",
+  exec: "执行命令",
+  sessions_send: "派发星位",
+  sessions_history: "读会话记录",
+  sessions_list: "列会话",
+  spawn: "派生子任务",
+  message: "发消息",
+  write: "写文件",
+  read: "读文件",
+  edit: "改文件",
+  patch: "打补丁",
+  automations: "定时任务",
+  cron: "定时任务",
+  browser: "浏览器操作",
+  image: "识图",
+  canvas: "画布",
+  nodes: "节点消息",
+  voice: "语音",
+};
+
+export function toolProgressLabel(name, translate = true) {
+  if (!name) return "";
+  return translate ? (TOOL_LABELS[name] ?? name) : name;
+}
+
+/// openclaw 的英文报错模板 → 中文。按真机出现频率配短表（Leo 2026-10-04：
+/// "leo/gpt-6 request failed (provider internal error, HTTP 502)" 与
+/// "LLM request timed out." 频发）；未命中透传原文，绝不吞信息。
+export function sessionErrorText(raw, translate = true) {
+  if (!raw) return "";
+  const text = String(raw);
+  if (!translate) return text;
+  const http = text.match(/HTTP (\d{3})/i);
+  const code = http ? `，HTTP ${http[1]}` : "";
+  if (/provider internal error/i.test(text)) {
+    return `模型请求失败（provider 内部错误${code}）——通常是临时的，稍后重试`;
+  }
+  if (/rate limit/i.test(text)) {
+    return `触发限流${code}——稍等片刻再试`;
+  }
+  if (/timed? ?out/i.test(text)) {
+    return `模型请求超时${code}`;
+  }
+  return text;
+}
+
 /// 单条会话 run → hop 形态（胶卷格与横条行悬停卡共用同一映射）。
 export function sessionRunHop(run) {
   return {
     taskId: `session-run:${run.id ?? run.runId ?? run.sessionKey}`,
     agentId: run.agentId,
     status: sessionRunHopStatus(run.status),
-    title: run.title ?? "",
+    title: run.title ?? run.fallbackTitle ?? "",
     progressSummary: run.progressSummary ?? null,
     startedAtMs: run.startedAtMs ?? 0,
     endedAtMs: run.endedAtMs ?? null,

@@ -582,6 +582,8 @@ pub struct SessionUsage {
     pub runtime_ms: Option<i64>,
     pub updated_at: Option<i64>,
     pub subject: Option<String>,
+    /// 会话显示名（群名 / "Automation: …"），标题回落链的第二环。
+    pub display_name: Option<String>,
     /// 最近一次 run 的错误原话（会话 status=failed 时携带；台账失败行透传）。
     pub last_run_error: Option<String>,
 }
@@ -710,6 +712,10 @@ pub fn fetch_agents_snapshot(
                 updated_at: session.get("updatedAt").and_then(Value::as_i64),
                 subject: session
                     .get("subject")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                display_name: session
+                    .get("displayName")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
                 last_run_error: session
@@ -1081,6 +1087,7 @@ fn ensure_session_run_table(connection: &Connection) -> Result<()> {
             agent_id      TEXT,
             run_id        TEXT,
             title         TEXT,
+            fallback_title TEXT,
             status        TEXT,
             error         TEXT,
             progress_summary TEXT,
@@ -1093,6 +1100,9 @@ fn ensure_session_run_table(connection: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_session_run_time
             ON session_run(gateway, first_seen_ms);",
     )?;
+    // 0.20.11 及之前建的表没有 fallback_title：补列（重复执行报重复列，忽略）。
+    // 真标题可升级（extract 到原话时覆盖回落），回落只补空——两列分开存。
+    let _ = connection.execute_batch("ALTER TABLE session_run ADD COLUMN fallback_title TEXT;");
     Ok(())
 }
 
@@ -1142,6 +1152,9 @@ fn record_session_runs(
         if session.key.is_empty() {
             continue;
         }
+        // 标题回落链：chat.history 的派活原话取不到时（automation/cron 触发的
+        // run 没有 user 消息），退到群名 / Automation 名，不再裸"会话工作"。
+        let fallback_title = session.subject.clone().or_else(|| session.display_name.clone());
         let open: Option<i64> = connection
             .query_row(
                 "SELECT id FROM session_run \
@@ -1157,13 +1170,14 @@ fn record_session_runs(
                 None => {
                     connection.execute(
                         "INSERT INTO session_run (gateway, session_key, agent_id, status, \
-                         model, started_at_ms, first_seen_ms, last_seen_ms) \
-                         VALUES (?1,?2,?3,'running',?4,?5,?6,?6)",
+                         model, fallback_title, started_at_ms, first_seen_ms, last_seen_ms) \
+                         VALUES (?1,?2,?3,'running',?4,?5,?6,?7,?7)",
                         rusqlite::params![
                             target_label,
                             session.key,
                             session.agent_id,
                             session.model,
+                            fallback_title,
                             session.started_at.unwrap_or(now),
                             now
                         ],
@@ -1173,7 +1187,7 @@ fn record_session_runs(
                 }
             };
             // 标题/进度：chat.history（admin 会话）。降级路径：FORBIDDEN/超时/断流
-            // 都静默跳过——台账行保留，标题留空由前端显示兜底。
+            // 都静默跳过——台账行保留，标题由回落链（subject/displayName）兜底。
             if let Some(client) = client.as_deref_mut() {
                 if let Ok(payload) = client.call(
                     "chat.history",
@@ -1183,13 +1197,12 @@ fn record_session_runs(
                 ) {
                     let title = extract_dispatch_title(&payload);
                     let progress = extract_last_tool_progress(&payload);
-                    if title.is_some() || progress.is_some() {
-                        let _ = connection.execute(
-                            "UPDATE session_run SET title = COALESCE(title, ?2), \
-                             progress_summary = COALESCE(?3, progress_summary) WHERE id = ?1",
-                            rusqlite::params![run_row, title, progress],
-                        );
-                    }
+                    let _ = connection.execute(
+                        "UPDATE session_run SET title = COALESCE(title, ?2), \
+                         progress_summary = COALESCE(?3, progress_summary), \
+                         fallback_title = COALESCE(fallback_title, ?4) WHERE id = ?1",
+                        rusqlite::params![run_row, title, progress, fallback_title],
+                    );
                 }
             }
             let _ = connection.execute(
@@ -1206,9 +1219,10 @@ fn record_session_runs(
             };
             connection.execute(
                 "UPDATE session_run SET status = ?2, error = ?3, \
-                 ended_at_ms = COALESCE(?4, ?5), last_seen_ms = ?5 \
+                 ended_at_ms = COALESCE(?4, ?5), last_seen_ms = ?5, \
+                 fallback_title = COALESCE(fallback_title, ?6) \
                  WHERE id = ?1 AND status = 'running'",
-                rusqlite::params![id, status, error, session.ended_at, now],
+                rusqlite::params![id, status, error, session.ended_at, now, fallback_title],
             )?;
             written += 1;
         } else if let Some(ended) = session.ended_at {
@@ -1235,8 +1249,8 @@ fn record_session_runs(
             let (status, error) = session_run_terminal_status(session);
             connection.execute(
                 "INSERT INTO session_run (gateway, session_key, agent_id, status, error, \
-                 model, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)",
+                 model, fallback_title, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)",
                 rusqlite::params![
                     target_label,
                     session.key,
@@ -1244,6 +1258,7 @@ fn record_session_runs(
                     status,
                     error,
                     session.model,
+                    fallback_title,
                     session.started_at.unwrap_or(ended),
                     ended,
                     now
@@ -1375,6 +1390,8 @@ pub struct SessionRunRow {
     pub agent_id: Option<String>,
     pub run_id: Option<String>,
     pub title: Option<String>,
+    /// 标题回落（群名 / Automation 名）：chat.history 取不到原话时前端用它。
+    pub fallback_title: Option<String>,
     pub status: Option<String>,
     pub error: Option<String>,
     pub progress_summary: Option<String>,
@@ -1393,7 +1410,7 @@ pub fn list_session_runs(
     ensure_session_run_table(connection)?;
     let limit = limit.unwrap_or(300).min(2000);
     let sql = format!(
-        "SELECT id, gateway, session_key, agent_id, run_id, title, status, error, \
+        "SELECT id, gateway, session_key, agent_id, run_id, title, fallback_title, status, error, \
          progress_summary, model, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms \
          FROM session_run \
          ORDER BY COALESCE(ended_at_ms, last_seen_ms) DESC LIMIT {limit}"
@@ -1409,14 +1426,15 @@ pub fn list_session_runs(
             agent_id: row.get(3)?,
             run_id: row.get(4)?,
             title: row.get(5)?,
-            status: row.get(6)?,
-            error: row.get(7)?,
-            progress_summary: row.get(8)?,
-            model: row.get(9)?,
-            started_at_ms: row.get(10)?,
-            ended_at_ms: row.get(11)?,
-            first_seen_ms: row.get(12)?,
-            last_seen_ms: row.get(13)?,
+            fallback_title: row.get(6)?,
+            status: row.get(7)?,
+            error: row.get(8)?,
+            progress_summary: row.get(9)?,
+            model: row.get(10)?,
+            started_at_ms: row.get(11)?,
+            ended_at_ms: row.get(12)?,
+            first_seen_ms: row.get(13)?,
+            last_seen_ms: row.get(14)?,
         });
     }
     Ok(out)
@@ -1817,6 +1835,26 @@ mod tests {
             extract_dispatch_title(&hole).as_deref(),
             Some("较早的派活原话")
         );
+    }
+
+    #[test]
+    fn session_run_falls_back_to_subject_title() {
+        let connection = memory_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        // automation 触发的 run 没有 user 派活消息：标题回落群名/Automation 名
+        let mut auto = session_run_fixture(
+            "agent:tianshu:cron:demo",
+            true,
+            Some("running"),
+            Some(now),
+            None,
+            None,
+        );
+        auto.subject = Some("北斗矩阵".to_owned());
+        record_session_runs(&connection, "vps", &[auto], None, &DEFAULT_LEDGER).unwrap();
+        let runs = list_session_runs(&connection, None).unwrap();
+        assert_eq!(runs[0].fallback_title.as_deref(), Some("北斗矩阵"));
+        assert_eq!(runs[0].title, None);
     }
 
     #[test]

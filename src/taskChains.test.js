@@ -11,7 +11,9 @@ import {
   isActiveTask,
   selectUsageSessions,
   sessionEpisodeHops,
+  sessionErrorText,
   sessionRunHopStatus,
+  toolProgressLabel,
 } from "./taskChains.js";
 
 const task = (overrides) => ({
@@ -229,4 +231,29 @@ test("sessionEpisodeHops: 长任务只要交接连续就不断链，沉默超 1h
   // 沉默上限可调（设置页 episodeGapMin）：放宽到 2h，65 分钟的沉默也串回来
   const relaxed = sessionEpisodeHops(withPause, laterFocus, 2 * 3_600_000);
   assert.deepEqual(relaxed.map((hop) => hop.taskId), ["session-run:1", "session-run:2", "session-run:5", "session-run:6"]);
+});
+
+test("toolProgressLabel/sessionErrorText: 工具名与常见报错的中文显示层", () => {
+  assert.equal(toolProgressLabel("web_search"), "联网搜索");
+  assert.equal(toolProgressLabel("exec"), "执行命令");
+  assert.equal(toolProgressLabel("sessions_send"), "派发星位");
+  assert.equal(toolProgressLabel("mystery_tool"), "mystery_tool");
+  assert.equal(toolProgressLabel(null), "");
+  assert.equal(
+    sessionErrorText(
+      "leo/gpt-6 request failed (provider internal error, HTTP 502). This is usually temporary — try again shortly.",
+    ),
+    "模型请求失败（provider 内部错误，HTTP 502）——通常是临时的，稍后重试",
+  );
+  assert.equal(sessionErrorText("LLM request timed out."), "模型请求超时");
+  assert.equal(sessionErrorText("自定义错误原话"), "自定义错误原话");
+  assert.equal(sessionErrorText(null), "");
+});
+
+test("toolProgressLabel/sessionErrorText: 关闭中文映射 = 回原文", () => {
+  assert.equal(toolProgressLabel("exec", false), "exec");
+  assert.equal(
+    sessionErrorText("leo/gpt-6 request failed (provider internal error, HTTP 502).", false),
+    "leo/gpt-6 request failed (provider internal error, HTTP 502).",
+  );
 });

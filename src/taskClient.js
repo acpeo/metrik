@@ -231,6 +231,7 @@ export function loadMonitorConfig() {
       failedWindowH: clampNumber(raw.failedWindowH, 24, 1, 168),
       ledgerRetentionDays: clampNumber(raw.ledgerRetentionDays, 7, 1, 90),
       missedWindowHours: clampNumber(raw.missedWindowHours, 1, 1, 72),
+      translateProgress: raw.translateProgress !== false,
     };
   } catch {
     return {
@@ -240,6 +241,7 @@ export function loadMonitorConfig() {
       failedWindowH: 24,
       ledgerRetentionDays: 7,
       missedWindowHours: 1,
+      translateProgress: true,
     };
   }
 }
@@ -252,6 +254,7 @@ export function saveMonitorConfig(config) {
     failedWindowH: clampNumber(config.failedWindowH, 24, 1, 168),
     ledgerRetentionDays: clampNumber(config.ledgerRetentionDays, 7, 1, 90),
     missedWindowHours: clampNumber(config.missedWindowHours, 1, 1, 72),
+    translateProgress: config.translateProgress !== false,
   };
   localStorage.setItem(MONITOR_KEY, JSON.stringify(clean));
   if (typeof window !== "undefined") {
