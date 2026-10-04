@@ -63,6 +63,7 @@ export async function loadSessionRuns() {
           agentId: "tianshu",
           status: "done",
           title: "「热点选题测试-20261003」完整走一遍北斗链路，从天璇开始",
+          terminalSummary: "链路已跑通：研究 → 初审 → 创作三段接力派给天璇/天权/天玑，验收点写进各卡，成稿回传共享盘。",
           startedAtMs: now - 26 * min,
           endedAtMs: now - 24 * min,
           firstSeenMs: now - 26 * min,
@@ -74,6 +75,7 @@ export async function loadSessionRuns() {
           agentId: "tianxuan",
           status: "done",
           title: "天璇，选题研究：OpenAI 智能体越权，产出研究 md 到 /tmp",
+          terminalSummary: "研究完成：md 已落 /tmp/research-openai-agent-authz.md，要点 7 条、风险 3 处、引用 12 篇。",
           startedAtMs: now - 24 * min,
           endedAtMs: now - 18 * min,
           firstSeenMs: now - 24 * min,
@@ -85,6 +87,7 @@ export async function loadSessionRuns() {
           agentId: "tianquan",
           status: "done",
           title: "天权，初审天璇的研究报告，给 PASS/FAIL 结论和强制约束",
+          terminalSummary: "初审 PASS。三条强制约束：直接动笔不重读文档、字数下限 1200、引用必须带原文链接。",
           startedAtMs: now - 17 * min,
           endedAtMs: now - 13 * min,
           firstSeenMs: now - 17 * min,
@@ -113,6 +116,44 @@ export async function loadSessionRuns() {
           firstSeenMs: now - 3 * min,
           lastSeenMs: now - 2_000,
         }),
+        // ── 3 小时前已收尾的一轮小接力（gap 链自然切段）：历史轮次的样例 ──
+        run({
+          id: 7,
+          sessionKey: "agent:tianshu:feishu:group:oc_demo_relay",
+          agentId: "tianshu",
+          status: "done",
+          title: "把昨天的调研纪要整理成周报草稿",
+          terminalSummary: "周报草稿已写入 /tmp/weekly-draft.md（5 节），待终稿校对。",
+          startedAtMs: now - 180 * min,
+          endedAtMs: now - 176 * min,
+          firstSeenMs: now - 180 * min,
+          lastSeenMs: now - 176 * min,
+        }),
+        // ── 良性未跑样例（失败分诊六案②）：心跳在免打扰时段被跳过——
+        // 网关记 failed，但不是真失败，UI 灰显「跳过」不占失败区 ──
+        run({
+          id: 9,
+          sessionKey: "agent:yuheng:cron:demo-heartbeat",
+          agentId: "yuheng",
+          status: "failed",
+          title: "heartbeat-yuheng",
+          error: "heartbeat skipped: quiet-hours",
+          startedAtMs: now - 42 * min,
+          endedAtMs: now - 42 * min + 300,
+          firstSeenMs: now - 42 * min,
+          lastSeenMs: now - 42 * min + 300,
+        }),
+        run({
+          id: 8,
+          sessionKey: "agent:tianxuan:feishu:group:oc_demo_relay",
+          agentId: "tianxuan",
+          status: "done",
+          title: "周报终稿校对并写入共享盘",
+          startedAtMs: now - 175 * min,
+          endedAtMs: now - 171 * min,
+          firstSeenMs: now - 175 * min,
+          lastSeenMs: now - 171 * min,
+        }),
         // ── 接力之外：并行定时任务（无 :group: 前缀，不进这段胶卷）→ +1 ──
         run({
           id: 6,
@@ -133,6 +174,75 @@ export async function loadSessionRuns() {
     return { demo: false, runs: Array.isArray(runs) ? runs : [] };
   } catch (error) {
     return { demo: false, runs: [], loadError: String(error) };
+  }
+}
+
+/// 定时任务看板（六案③）：cron.list 的本地镜像读回 + 触发拉取。
+/// 镜像在 Rust 侧 60 秒节流，前端每拍调用也只真连一次每分钟。
+/// 演示数据 = 北斗真实形态三例（巡检/心跳/停用的记忆整理），并自带
+/// lastRunStatus/lastRunAtMs 演示字段——真机不走这两个字段，看板用
+/// 任务账本（sourceId 对账）拼"上次结果"，这里只为了浏览器预览完整。
+export async function loadCronJobs() {
+  if (!isTauriRuntime()) {
+    const now = Date.now();
+    const min = 60_000;
+    return {
+      demo: true,
+      jobs: [
+        {
+          id: "cron-demo-patrol",
+          gateway: "vps",
+          name: "北斗巡检-OpenAI安全黑洞任务",
+          description: "每日巡检 OpenAI 安全动态并汇报北斗矩阵群",
+          enabled: true,
+          scheduleExpr: "0 14 * * *",
+          updatedAtMs: now,
+          lastRunStatus: "completed",
+          lastRunAtMs: now - 5 * 3_600_000 - 52 * min,
+        },
+        {
+          id: "cron-demo-heartbeat",
+          gateway: "vps",
+          name: "heartbeat-tianshu",
+          description: "天枢心跳保活",
+          enabled: true,
+          scheduleExpr: "*/30 * * * *",
+          updatedAtMs: now,
+          lastRunStatus: "failed",
+          lastRunError: "heartbeat skipped: quiet-hours",
+          lastRunAtMs: now - 42 * min,
+        },
+        {
+          id: "cron-demo-memory",
+          gateway: "vps",
+          name: "Memory Dreaming Promotion",
+          description: "Promote weighted short-term recalls into MEMORY.md",
+          enabled: false,
+          scheduleExpr: "0 3 * * *",
+          updatedAtMs: now,
+          lastRunStatus: "completed",
+          lastRunAtMs: now - 26 * 3_600_000,
+        },
+      ],
+    };
+  }
+  try {
+    const jobs = await invoke("gateway_cron_list", { limit: 200 });
+    return { demo: false, jobs: Array.isArray(jobs) ? jobs : [] };
+  } catch (error) {
+    return { demo: false, jobs: [], loadError: String(error) };
+  }
+}
+
+export async function refreshCronJobs(gateways) {
+  if (!isTauriRuntime()) {
+    return { demo: true, results: gateways.map((gateway) => ({ gateway: gateway.label, ok: true, taskCount: 0, error: null })) };
+  }
+  try {
+    const results = await invoke("gateway_cron_snapshot", { gateways });
+    return { demo: false, results };
+  } catch (error) {
+    return { demo: false, results: [], loadError: String(error) };
   }
 }
 
@@ -171,7 +281,8 @@ export async function loadAgentsSnapshot(gateways) {
           isGroup: false,
           model: "gpt-6",
           contextTokens: 525000,
-          estimatedPromptTokens: 154174,
+          // 87% ≈ 超过 80% 预警线：水位预警（六案⑥）的琥珀"建议清理"样例
+          estimatedPromptTokens: 460_000,
           contextTokenBudget: 525000,
           promptMessageCount: 128,
           shouldCompact: false,
@@ -189,8 +300,9 @@ export async function loadAgentsSnapshot(gateways) {
           contextTokenBudget: 525000,
           promptMessageCount: index < 2 ? 18 + index * 22 : null,
           shouldCompact: false,
-          hasActiveRun: index === 0,
-          updatedAt: now - (index < 3 ? index * 4000 : 40 * 60_000),
+          // 天玑（index 2）= 正在跑的补发跳：运行中但上下文还没产出 → "启动中"
+          hasActiveRun: index === 2,
+          updatedAt: now - (index < 2 ? index * 4000 : index === 2 ? 3000 : 40 * 60_000),
         })),
       ],
     };
@@ -222,39 +334,97 @@ function clampNumber(value, fallback, min, max) {
 }
 
 export function loadMonitorConfig() {
+  // 水位预警阈值特殊：0 = 关闭（不预警），50–95 = 阈值百分比。
+  const warnPct = (value, fallback) => {
+    const n = Number(value);
+    if (n === 0) return 0;
+    return clampNumber(n ?? fallback, fallback, 50, 95);
+  };
+  // 免打扰时段是 HH:MM 字符串（支持跨午夜），非法值回缺省。
+  const clock = (value, fallback) => {
+    const text = String(value ?? "").trim();
+    return /^([01]?\d|2[0-3]):[0-5]\d$/.test(text) ? text : fallback;
+  };
   try {
     const raw = JSON.parse(localStorage.getItem(MONITOR_KEY) || "{}");
     return {
       refreshIntervalSec: clampNumber(raw.refreshIntervalSec, 3, 1, 60),
       staleThresholdSec: clampNumber(raw.staleThresholdSec, 120, 10, 3600),
       episodeGapMin: clampNumber(raw.episodeGapMin, 60, 5, 720),
-      failedWindowH: clampNumber(raw.failedWindowH, 24, 1, 168),
+      failedWindowH: clampNumber(raw.failedWindowH, 1, 1, 168),
       ledgerRetentionDays: clampNumber(raw.ledgerRetentionDays, 7, 1, 90),
       missedWindowHours: clampNumber(raw.missedWindowHours, 1, 1, 72),
       translateProgress: raw.translateProgress !== false,
+      // 任务小组件贴边自动隐藏（边缘挂靠）：默认关，勾选后拖到屏幕边缘收起。
+      tasksEdgeDock: raw.tasksEdgeDock === true,
+      // 主窗"任务"页历史轮次回看窗口（分钟，0=关闭）。台账保留期是数据上限，
+      // 这里只管显示多久；上限 10080 = 7 天（对齐台账缺省保留期）。
+      historyWindowMin: clampNumber(raw.historyWindowMin, 1440, 0, 10080),
+      // 星位上下文水位预警阈值（%，0=关）。
+      watermarkWarnPct: warnPct(raw.watermarkWarnPct, 80),
+      // 自绘提醒角标（六案 B·自绘壳）：总开关默认关，要用主动开。
+      notifyEnabled: raw.notifyEnabled === true,
+      notifyOnFailure: raw.notifyOnFailure !== false,
+      notifyOnComplete: raw.notifyOnComplete === true,
+      notifyAggregateMin: clampNumber(raw.notifyAggregateMin, 10, 2, 60),
+      notifyStaySec: clampNumber(raw.notifyStaySec, 8, 4, 30),
+      notifyQuietOn: raw.notifyQuietOn !== false,
+      notifyQuietStart: clock(raw.notifyQuietStart, "23:00"),
+      notifyQuietEnd: clock(raw.notifyQuietEnd, "08:00"),
     };
   } catch {
     return {
       refreshIntervalSec: 3,
       staleThresholdSec: 120,
       episodeGapMin: 60,
-      failedWindowH: 24,
+      failedWindowH: 1,
       ledgerRetentionDays: 7,
       missedWindowHours: 1,
       translateProgress: true,
+      tasksEdgeDock: false,
+      historyWindowMin: 1440,
+      watermarkWarnPct: 80,
+      notifyEnabled: false,
+      notifyOnFailure: true,
+      notifyOnComplete: false,
+      notifyAggregateMin: 10,
+      notifyStaySec: 8,
+      notifyQuietOn: true,
+      notifyQuietStart: "23:00",
+      notifyQuietEnd: "08:00",
     };
   }
 }
 
 export function saveMonitorConfig(config) {
+  const warnPct = (value, fallback) => {
+    const n = Number(value);
+    if (n === 0) return 0;
+    return clampNumber(n ?? fallback, fallback, 50, 95);
+  };
+  const clock = (value, fallback) => {
+    const text = String(value ?? "").trim();
+    return /^([01]?\d|2[0-3]):[0-5]\d$/.test(text) ? text : fallback;
+  };
   const clean = {
     refreshIntervalSec: clampNumber(config.refreshIntervalSec, 3, 1, 60),
     staleThresholdSec: clampNumber(config.staleThresholdSec, 120, 10, 3600),
     episodeGapMin: clampNumber(config.episodeGapMin, 60, 5, 720),
-    failedWindowH: clampNumber(config.failedWindowH, 24, 1, 168),
+    failedWindowH: clampNumber(config.failedWindowH, 1, 1, 168),
     ledgerRetentionDays: clampNumber(config.ledgerRetentionDays, 7, 1, 90),
     missedWindowHours: clampNumber(config.missedWindowHours, 1, 1, 72),
     translateProgress: config.translateProgress !== false,
+    tasksEdgeDock: config.tasksEdgeDock === true,
+    historyWindowMin: clampNumber(config.historyWindowMin, 1440, 0, 10080),
+    watermarkWarnPct: warnPct(config.watermarkWarnPct, 80),
+    notifyEnabled: config.notifyEnabled === true,
+    notifyOnFailure: config.notifyOnFailure !== false,
+    notifyOnComplete: config.notifyOnComplete === true,
+    notifyAggregateMin: clampNumber(config.notifyAggregateMin, 10, 2, 60),
+    notifyStaySec: clampNumber(config.notifyStaySec, 8, 4, 30),
+    notifyQuietOn: config.notifyQuietOn !== false,
+    notifyQuietStart: clock(config.notifyQuietStart, "23:00"),
+    notifyQuietEnd: clock(config.notifyQuietEnd, "08:00"),
   };
   localStorage.setItem(MONITOR_KEY, JSON.stringify(clean));
   if (typeof window !== "undefined") {

@@ -28,6 +28,29 @@ function isDockAnchorPosition(position, anchor, tolerance = 2) {
   );
 }
 
+/// 挂靠收起后窗口的停泊位：只留 peekPx（物理像素，按显示器缩放折算）一条
+/// 细边在屏幕内，其余滑出工作区。
+function edgeDockHiddenPosition(dock, peekPx = 6) {
+  if (!dock?.edge) return null;
+  const visible = Math.round(peekPx * (dock.scale || 1));
+  switch (dock.edge) {
+    case "bottom": return { x: dock.x, y: dock.bottom - visible };
+    case "left": return { x: dock.left - dock.width + visible, y: dock.y };
+    case "right": return { x: dock.right - visible, y: dock.y };
+    default: return { x: dock.x, y: dock.top - dock.height + visible };
+  }
+}
+
+/// 挂靠锚点自校验：窗口仍停在记录的几何上（显形用挂靠原位、收起用停泊位）
+/// 且尺寸未变，才算"仍在锚点上"。展开/折叠面板这类程序化改尺寸、外力位移
+/// 都会让锚点过期，调用方按"用户拖动"同一语义释放并重估。
+function isDockGeometryCurrent(position, size, dock, hidden = false) {
+  if (!position || !size || !dock) return false;
+  const anchor = hidden ? edgeDockHiddenPosition(dock) : { x: dock.x, y: dock.y };
+  if (!isDockAnchorPosition(position, anchor)) return false;
+  return size.width === dock.width && size.height === dock.height;
+}
+
 function monitorArea(monitor) {
   if (!monitor?.position || !monitor?.size) return null;
   return {
@@ -291,10 +314,12 @@ function monitorForWindowPosition(
 
 export {
   desyncHealRetryDelayMs,
+  edgeDockHiddenPosition,
   floatingViewportSize,
   horizontalStripTargetWidth,
   horizontalTasksHoverLayout,
   isDockAnchorPosition,
+  isDockGeometryCurrent,
   isStableFloatingMode,
   monitorForWindowPosition,
   physicalWindowSize,

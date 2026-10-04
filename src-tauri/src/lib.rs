@@ -1440,7 +1440,9 @@ fn spawn_tasks_widget_window(app: &tauri::AppHandle) -> Result<(), String> {
     .decorations(false)
     .transparent(true)
     .shadow(false)
-    .resizable(false)
+    // 展开面板允许拖拽调宽高（JS 侧在展开/折叠时动态开合尺寸边界与
+    // 可拖拽标志——胶囊态 42×36 远小于面板下限，边界不能写死在这里）。
+    .resizable(true)
     .skip_taskbar(true)
     .focused(false);
     // 锚在主窗口右缘外 8px 同一高度（用主窗外框实宽，别再用写死的 356——
@@ -1504,6 +1506,92 @@ fn show_main_expanded(app: tauri::AppHandle) -> Result<(), String> {
     }
     use tauri::Emitter;
     let _ = app.emit(TRAY_SHOW_EXPANDED, ());
+    Ok(())
+}
+
+/// 自绘提醒角标窗（六案 B·自绘壳，2026-10-04 Leo 拍板）：屏幕右下角
+/// 无框透明小窗，常驻隐藏、有卡才由前端自行 show（set 命令只管总开关）。
+/// 与任务小组件同一套生命周期纪律：幂等 show/hide 绝不销毁重建（同 label
+/// 重建永久失效的坑），async command 防 Windows 建窗死锁。
+const NOTIFICATION_VISIBILITY: &str = "tasks://notification-visibility";
+const NOTIFICATION_WINDOW_W: f64 = 344.0;
+const NOTIFICATION_WINDOW_H: f64 = 330.0;
+
+fn spawn_notification_window(app: &tauri::AppHandle) -> Result<(), String> {
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "notifications",
+        tauri::WebviewUrl::App("index.html?view=notifications".into()),
+    )
+    .title("Metrik 提醒")
+    .inner_size(NOTIFICATION_WINDOW_W, NOTIFICATION_WINDOW_H)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .resizable(false)
+    .skip_taskbar(true)
+    .focused(false)
+    .always_on_top(true)
+    // 创建后隐藏待命：卡堆由前端自管显隐（空=藏、来卡=弹），总开关只管生死。
+    .visible(false);
+    // 锚在主窗所在显示器的右下角：任务栏上方约 50px（余量含任务栏高度）。
+    if let Some(main) = app.get_webview_window("main") {
+        let scale = main.scale_factor().unwrap_or(1.0);
+        if let Ok(Some(monitor)) = main.current_monitor() {
+            let screen_w = monitor.size().width as f64 / scale;
+            let screen_h = monitor.size().height as f64 / scale;
+            let origin_x = monitor.position().x as f64 / scale;
+            let origin_y = monitor.position().y as f64 / scale;
+            let x = (origin_x + screen_w - NOTIFICATION_WINDOW_W - 16.0).max(origin_x);
+            let y = (origin_y + screen_h - NOTIFICATION_WINDOW_H - 50.0).max(origin_y);
+            builder = builder.position(x, y);
+        }
+    }
+    builder.build().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_notification_window(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+    match app.get_webview_window("notifications") {
+        Some(window) => {
+            // 显隐由前端按卡堆自管（空=藏、来卡=弹）；总开关只负责"藏"和
+            // "确保窗已创建"，不主动 show 空窗。
+            if !visible {
+                let _ = window.hide();
+            }
+        }
+        None => {
+            if visible {
+                spawn_notification_window(&app)?;
+            }
+        }
+    }
+    use tauri::Emitter;
+    let _ = app.emit(NOTIFICATION_VISIBILITY, visible);
+    Ok(())
+}
+
+/// 提醒卡点击的跳转仲裁（Leo 拍板的 A 案）：任务小组件窗在 → 广播展开面板；
+/// 不在 → 唤主窗并广播切到「任务」页。监听方各自幂等。
+#[tauri::command]
+fn expand_round_details(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    match app.get_webview_window("tasks-widget") {
+        Some(widget) => {
+            let _ = widget.show();
+            let _ = widget.unminimize();
+            let _ = app.emit("tasks://panel-expand", ());
+        }
+        None => {
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.unminimize();
+                let _ = main.set_focus();
+            }
+            let _ = app.emit("tasks://nav-tasks", ());
+        }
+    }
     Ok(())
 }
 
@@ -1821,6 +1909,65 @@ fn session_run_list(
     gateway_tasks::list_session_runs(&connection, limit).map_err(|error| error.to_string())
 }
 
+/// 拉一次定时任务列表并落本地镜像（cron.list，operator.read 即可读）。
+/// 60 秒节流：看板数据变化以分钟计，不值得按 3 秒拍握手。
+#[tauri::command]
+async fn gateway_cron_snapshot(
+    gateways: Vec<GatewayTargetConfig>,
+    state: State<'_, AppState>,
+) -> Result<Vec<GatewayTaskView>, String> {
+    let database_path = state.database_path.clone();
+    let scan_gate = Arc::clone(&state.scan_gate);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _gate = scan_gate
+            .lock()
+            .map_err(|_| "usage scan lock poisoned".to_owned())?;
+        let connection =
+            storage::open_database(&database_path).map_err(|error| error.to_string())?;
+        let mut views = Vec::new();
+        let mut last_fetch: Option<(String, std::time::Instant)> = None;
+        for target in &gateways {
+            let gw = gateway_tasks::GatewayTarget {
+                label: target.label.clone(),
+                url: target.url.clone(),
+                token: target.token.clone(),
+                identity_dir: target.identity_dir.clone(),
+            };
+            match gateway_tasks::snapshot_gateway_crons_throttled(&connection, &gw, &mut last_fetch)
+            {
+                Ok(_) => views.push(GatewayTaskView {
+                    gateway: target.label.clone(),
+                    ok: true,
+                    task_count: 0,
+                    error: None,
+                }),
+                Err(error) => views.push(GatewayTaskView {
+                    gateway: target.label.clone(),
+                    ok: false,
+                    task_count: 0,
+                    error: Some(error.to_string()),
+                }),
+            }
+        }
+        Ok(views)
+    })
+    .await
+    .map_err(|error| format!("gateway cron snapshot failed: {error}"))?
+}
+
+/// 读本地定时任务镜像（不联网）：主窗任务页"定时任务"看板数据源。
+#[tauri::command]
+fn gateway_cron_list(
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<Vec<gateway_tasks::GatewayCronRow>, String> {
+    let database_path = state.database_path.clone();
+    let connection =
+        storage::open_database_read_only(&database_path).map_err(|error| error.to_string())?;
+    gateway_tasks::list_crons(&connection, limit).map_err(|error| error.to_string())
+}
+
 /// 会话台账口径（设置页"实时监控参数"下发）：保留期 1–90 天、漏采补记 1–72 小时。
 /// 缺省值 = 7 天 / 1 小时。幻影阈值是内部容错，不在设置面暴露。
 #[derive(serde::Deserialize, Clone, Copy, Default)]
@@ -1845,6 +1992,7 @@ fn session_ledger_options(params: SessionLedgerParams) -> gateway_tasks::Session
 /// 带 2.5s 节流，与前端 3s 刷新节奏对齐。
 #[tauri::command]
 async fn gateway_agents_snapshot(
+    app: tauri::AppHandle,
     gateways: Vec<GatewayTargetConfig>,
     ledger: Option<SessionLedgerParams>,
     state: State<'_, AppState>,
@@ -1909,7 +2057,26 @@ async fn gateway_agents_snapshot(
         })
     })
     .await
-    .map_err(|error| format!("agents snapshot failed: {error}"))?
+    .map_err(|error| format!("agents snapshot failed: {error}"))?;
+    // 星名映射广播：提醒窗是独立 webview（localStorage 不共享），失败文案
+    // 要中文名——权威源就在本快照里，顺手广播（小载荷、幂等，emit 回到发送
+    // 方也无妨，监听方内容相同不刷新）。
+    {
+        use tauri::Emitter;
+        let mut names = std::collections::HashMap::new();
+        for agent in &payload.agents {
+            if let Some(name) = &agent.name {
+                names
+                    .entry(agent.agent_id.clone())
+                    .or_insert_with(|| name.clone());
+                if let Some(suffix) = agent.agent_id.rsplit(':').next() {
+                    names.insert(suffix.to_string(), name.clone());
+                }
+            }
+        }
+        let _ = app.emit("tasks://agent-names", names);
+    }
+    Ok(payload)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2118,9 +2285,13 @@ pub fn run() {
             update_macos_status_items,
             gateway_task_snapshot,
             gateway_task_list,
+            gateway_cron_snapshot,
+            gateway_cron_list,
             gateway_agents_snapshot,
             session_run_list,
             set_tasks_widget_window,
+            set_notification_window,
+            expand_round_details,
             show_main_expanded
         ])
         .run(tauri::generate_context!())

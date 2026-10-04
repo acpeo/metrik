@@ -4617,6 +4617,226 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 :root[data-theme="dark"] .task-row-error { color: #e08d8d; }
 
+/* ── 历史轮次（主窗"任务"页）：收尾的接力段列表，点行展开跳序回放 ── */
+.history-episodes {
+  margin-top: 26px;
+}
+
+.history-episodes-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #26282b;
+}
+:root[data-theme="dark"] .history-episodes-head { color: #ececec; }
+
+.history-episodes-head small {
+  font-size: 12px;
+  font-weight: 400;
+  color: #74767a;
+}
+
+/* ── 定时任务看板（六案③）与链路全景（六案④）：任务页两块新卡，跟历史轮次
+   同一版式语言（同头、同卡底、同行距） ─────────────────────────── */
+
+.cron-board,
+.chain-panorama {
+  margin-top: 26px;
+}
+
+.cron-board-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cron-board-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 16px;
+  border: 1px solid rgba(31, 33, 36, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+}
+:root[data-theme="dark"] .cron-board-row {
+  border-color: rgba(240, 240, 240, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cron-pill {
+  flex: none;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.cron-pill--on { background: rgba(88, 162, 107, 0.16); color: #2e7a48; }
+:root[data-theme="dark"] .cron-pill--on { background: rgba(111, 196, 154, 0.16); color: #6fc49a; }
+.cron-pill--off { background: rgba(31, 33, 36, 0.08); color: #74767a; }
+:root[data-theme="dark"] .cron-pill--off { background: rgba(240, 240, 240, 0.1); color: #9aa2b0; }
+
+.cron-board-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cron-board-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cron-board-sched {
+  font-size: 12px;
+  color: #74767a;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme="dark"] .cron-board-sched { color: #9aa2b0; }
+
+.cron-board-last {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #74767a;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme="dark"] .cron-board-last { color: #9aa2b0; }
+.cron-board-last--none { opacity: 0.7; }
+
+.cron-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.cron-dot--done { background: #58a26b; }
+:root[data-theme="dark"] .cron-dot--done { background: #6fc49a; }
+.cron-dot--failed { background: #c25656; }
+:root[data-theme="dark"] .cron-dot--failed { background: #ec7a63; }
+.cron-dot--skipped { background: #9aa2b0; opacity: 0.7; }
+.cron-dot--current { background: #58a26b; animation: live-pulse 1.5s ease-in-out infinite; }
+:root[data-theme="dark"] .cron-dot--current { background: #6fc49a; }
+
+.cron-board-next {
+  flex: none;
+  min-width: 72px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b07a2a;
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme="dark"] .cron-board-next { color: #e0b060; }
+
+.chain-panorama-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.chain-panorama-item {
+  border: 1px solid rgba(31, 33, 36, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+  padding: 8px 6px;
+}
+:root[data-theme="dark"] .chain-panorama-item {
+  border-color: rgba(240, 240, 240, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+/* 时间线在卡片里放宽：跳标题可换行（默认 nowrap 是任务列表窄行口径） */
+.chain-panorama-item .task-timeline-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.history-episode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-episode {
+  border: 1px solid rgba(31, 33, 36, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+}
+:root[data-theme="dark"] .history-episode {
+  border-color: rgba(240, 240, 240, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.history-episode-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 16px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.history-episode-row:hover { background: rgba(31, 33, 36, 0.04); }
+:root[data-theme="dark"] .history-episode-row:hover { background: rgba(255, 255, 255, 0.05); }
+
+.history-episode-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #58a26b;
+}
+.history-episode-dot--failed { background: #c25656; }
+
+.history-episode-time {
+  flex: none;
+  font-size: 12px;
+  color: #74767a;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-episode-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: #26282b;
+}
+:root[data-theme="dark"] .history-episode-title { color: #ececec; }
+
+.history-episode-meta {
+  flex: none;
+  font-size: 12px;
+  color: #74767a;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-episode-detail {
+  padding: 4px 16px 12px;
+  border-top: 1px solid rgba(31, 33, 36, 0.08);
+}
+:root[data-theme="dark"] .history-episode-detail { border-top-color: rgba(240, 240, 240, 0.08); }
+
 .task-pill {
   display: inline-flex;
   align-items: center;
@@ -6539,6 +6759,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-task-accent--running { background: #6fc49a; }
 .widget-task-accent--queued { background: #e8b04a; }
 .widget-task-accent--failed { background: #ec7a63; }
+/* 良性未跑（六案②）：面板行首色条灰显，不染红 */
+.widget-task-accent--skipped { background: #8b93a1; opacity: 0.55; }
 
 .widget-task-main {
   display: flex;
@@ -6602,6 +6824,23 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 /* ── 独立任务小组件窗口（?view=tasks）────────────────────────────────
    外壳复用 .widget-* 全套玻璃 token；这里只补内容区的专属布局。 */
 
+/* 展开面板跟随窗口尺寸（用户可拖拽调宽高，尺寸记忆在 metrik:tasksPanelSize）：
+   .widget-shell 的 320 定宽是主窗小组件的规矩，任务面板放开到满窗。 */
+.tasks-window-shell {
+  width: 100vw;
+  min-width: 0;
+}
+
+/* 任务小组件（胶囊与面板）禁用根级原生滚动条：胶囊 36/224 高永远命中上面
+   "极小工作区"的 overflow:auto 兜底，WebView2 合成晚于 setSize 时视口差
+   1-2px 内容就溢出 → 原生横竖滚动条把细条顶成滚动残废（0.20.12 真机截图）。
+   任务窗内容自滚动（胶卷/面板列表自管），根上只许裁切，尺寸失配由
+   applyMiniCapsuleSize 的慢拍复核自愈。选择器同权重、靠源顺序后置取胜。 */
+html:has(.tasks-mini) #root,
+html:has(.tasks-window-shell) #root {
+  overflow: hidden !important;
+}
+
 .tasks-window-content {
   display: flex;
   flex-direction: column;
@@ -6643,6 +6882,24 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   letter-spacing: 0.08em;
   opacity: 0.5;
 }
+
+/* 卡头的空闲会话汇总：可点开关（展开/收起空闲会话明细），小一号、去字距。 */
+button.tasks-usage-idle {
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  opacity: 1;
+}
+button.tasks-usage-idle:hover { text-decoration: underline; }
+
+/* 展开出的空闲会话行：整体调暗——它们是"在场但没内容"的盘库信息。 */
+.tasks-usage-row--idle { opacity: 0.55; }
 
 .tasks-window-body::-webkit-scrollbar {
   width: 5px;
@@ -6825,6 +7082,13 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   opacity: 0.8;
 }
 
+/* 水位预警（六案⑥）：超阈值的"建议清理"角标，琥珀配预警条 */
+.tasks-usage-hot {
+  color: #e0b060;
+  opacity: 1;
+  font-weight: 600;
+}
+
 /* 独立任务窗的 footer 不在 .widget-content 里（拿不到它的 10px 内距），自己补齐。
    对齐方式跟原版 footer 一致用垂直居中——基线对齐在"中文+数字"混排下数字会显浮
    （2026-10-02 用户对照原版截图纠正）。 */
@@ -6967,6 +7231,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .tasks-mini-row--failed .tasks-mini-title { opacity: 0.72; }
+/* 良性未跑（六案②）：迷你行整行灰显降级，排在真失败之后 */
+.tasks-mini-row--skipped { opacity: 0.6; }
 
 /* 暂无运行中任务/未同步占位 */
 .tasks-mini-empty {
@@ -7104,6 +7370,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 .tasks-mini-dot--failed { background: #ec7a63; }
+.tasks-mini-dot--skipped { background: #8b93a1; opacity: 0.6; }
 
 /* 控制槽：与内容间一条发丝线（strip-controls 同款）；竖条时也是横排
    （展开=条身加宽，按钮内联一行，不再纵向堆塔裁切） */
@@ -7186,8 +7453,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   touch-action: pan-y;
   user-select: none;
   padding: 0 4px;
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
-  mask-image: linear-gradient(to right, transparent, #000 10%, #000 90%, transparent);
+  /* 两端渐隐遮罩已摘（Leo 2026-10-04：边缘星名看不清）——10% 渐隐区正好
+     吃掉首尾跳的字，再叠 done 跳 0.6 透明度就是双重变暗；"还能滚"的暗示
+     交给 +N 角标与按住拖拽，不为暗示牺牲可读性。 */
 }
 
 .tasks-mini-strip--vertical {
@@ -7209,8 +7477,12 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   justify-content: center;
 }
 .tasks-mini-railwrap .tasks-mini-strip--vertical { width: 100%; }
-.tasks-mini--hover-left .tasks-mini-railwrap { align-self: flex-start; }
-.tasks-mini--hover-right .tasks-mini-railwrap { align-self: flex-end; }
+/* 定侧类挂在 railwrap 本体上（悬停瞬间同步写），必须复合选择器——曾写成
+   后代选择器永远不命中：竖条悬停扩窗后胶卷不钉窗缘、随窗口平移，指针被甩
+   出胶卷 → 收窗 → 重进 → 再扩，真机表现为"左右跨越跳动+弹窗闪没"（0.20.12
+   真机复现，此类自悬停卡诞生起就是死的）。 */
+.tasks-mini-railwrap.tasks-mini--hover-left { align-self: flex-start; }
+.tasks-mini-railwrap.tasks-mini--hover-right { align-self: flex-end; }
 .tasks-hopcard {
   position: fixed;
   z-index: 80;
@@ -7255,6 +7527,19 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 .tasks-hopcard-progress em { color: #6fc49a; font-style: normal; }
 .tasks-hopcard-error { margin: 0; font-size: 11px; line-height: 1.4; color: #ff9c9c; }
+/* 成果速览（六案①）：收工跳的北斗中文结论，两行截断悬浮看全文 */
+.tasks-hopcard-summary {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #b8d8c6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 良性未跑（六案②失败分诊）：灰显说明，与红错区分 */
+.tasks-hopcard-skipped { margin: 0; font-size: 11px; line-height: 1.4; color: #9aa2b0; }
 .tasks-hopcard-meta {
   display: flex;
   justify-content: space-between;
@@ -7299,6 +7584,7 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   animation: live-pulse 1.5s ease-in-out infinite;
 }
 .tasks-hopcard-extra-dot--failed { background: #ec7a63; animation: none; }
+.tasks-hopcard-extra-dot--skipped { background: #8b93a1; opacity: 0.6; animation: none; }
 .tasks-hopcard-extra-dot--pending {
   background: color-mix(in srgb, currentColor 38%, transparent);
   animation: none;
@@ -7327,6 +7613,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 .tasks-hopcard--light .tasks-hopcard-progress em { color: #1f7a4d; }
 .tasks-hopcard--light .tasks-hopcard-error { color: #b3372f; }
+.tasks-hopcard--light .tasks-hopcard-summary { color: #2e6b50; }
+.tasks-hopcard--light .tasks-hopcard-skipped { color: #5c6472; }
 .tasks-hopcard--light .tasks-hopcard-extra { border-top-color: rgba(31, 33, 36, 0.1); }
 .tasks-hopcard--light .tasks-hopcard-extra-title--failed { color: #b3372f; }
 
@@ -7465,9 +7753,39 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   opacity: 0.9;
 }
 
+/* 良性未跑（六案②失败分诊）：面板副行灰显，与红错区分 */
+.task-progress-line--benign {
+  color: #9aa2b0;
+  opacity: 0.85;
+}
+
+/* 成果速览（六案①）：面板收工行下的北斗中文结论，两行截断悬浮看全文 */
+.task-summary-line {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #b8d8c6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.task-summary-line em { color: #6fc49a; font-style: normal; }
+
 .widget-shell--glass-light .task-progress-line--error {
   color: #b3372f;
 }
+
+.widget-shell--glass-light .task-progress-line--benign {
+  color: #5c6472;
+}
+
+.widget-shell--glass-light .task-summary-line,
+.widget-shell--glass-light .task-timeline-summary {
+  color: #2e6b50;
+}
+
+.widget-shell--glass-light .task-summary-line em { color: #1f7a4d; }
 
 /* 有链路的任务：行 + 链路同组，组底线替代行底线——链路在行与本组分隔线之间，
    不被任务行的底线隔在外面。压制规则要压过下面 glass-light/clear/ink 变体
@@ -7482,13 +7800,10 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 
 /* 展开卡里的链路 = 迷你胶囊同款胶片条（ChainFilmstrip）：超宽不裁，滚轮/按住拖动。
-   字号与明细跳名同档 11.5px；两端渐隐遮罩去掉——胶囊里是"还能滚"的暗示，
-   展开卡里链路几乎满宽，头尾星位正好落进渐隐区，字会看不清。 */
+   字号与明细跳名同档 11.5px；渐隐遮罩已在 .tasks-mini-strip 层整体摘除。 */
 .task-chain .tasks-mini-strip {
   cursor: grab;
   font-size: 11.5px;
-  -webkit-mask-image: none;
-  mask-image: none;
 }
 
 .task-chain .tasks-mini-strip:active {
@@ -7517,7 +7832,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
   font-variant-numeric: tabular-nums;
 }
 
-.task-chain-hop--done { opacity: 0.6; }
+/* done 0.70（Leo 2026-10-04 三档对比拍板 B 档）：比 failed 跳的 0.75 略暗一档
+   ——✕ 是要人处理的东西，应当比 ✓ 更抢眼；此前 0.6 是渐隐摘除前"双重变暗"时代的旧值 */
+.task-chain-hop--done { opacity: 0.7; }
 .task-chain-hop--done .task-chain-glyph { color: #6fc49a; }
 .task-chain-hop--current .task-chain-glyph {
   color: #6fc49a;
@@ -7525,6 +7842,8 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 }
 .task-chain-hop--failed { opacity: 0.75; }
 .task-chain-hop--failed .task-chain-glyph { color: #ec7a63; }
+.task-chain-hop--skipped { opacity: 0.55; }
+.task-chain-hop--skipped .task-chain-glyph { color: #8b93a1; }
 .task-chain-hop--pending { opacity: 0.45; }
 
 .task-chain-link {
@@ -7615,6 +7934,20 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .task-timeline-hop--current .task-timeline-glyph { color: #6fc49a; }
 .task-timeline-hop--failed .task-timeline-glyph { color: #ec7a63; }
 .task-timeline-hop--failed { opacity: 0.75; }
+.task-timeline-hop--skipped { opacity: 0.55; }
+.task-timeline-hop--skipped .task-timeline-glyph { color: #8b93a1; }
+/* 成果速览（六案①）：时间线收工跳下的结论两行截断 */
+.task-timeline-summary {
+  grid-column: 2 / -1;
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #b8d8c6;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 /* 浅色档状态色 = 浅面板 token */
 .widget-shell--transparent.widget-shell--glass-light .task-progress-line em,
@@ -7630,6 +7963,9 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
 .widget-shell--transparent.widget-shell--glass-light .task-chain-hop--done .task-chain-glyph,
 .widget-shell--transparent.widget-shell--glass-light .task-chain-hop--current .task-chain-glyph { color: #1f7a4d; }
 .widget-shell--transparent.widget-shell--glass-light .task-chain-hop--failed .task-chain-glyph { color: #a1402e; }
+.widget-shell--transparent.widget-shell--glass-light .task-chain-hop--skipped .task-chain-glyph,
+.widget-shell--transparent.widget-shell--glass-light .task-timeline-hop--skipped .task-timeline-glyph { color: #5c6472; }
+.widget-shell--transparent.widget-shell--glass-light .widget-task-accent--skipped { background: #8b93a1; }
 
 /* ── 深色 HUD 玻璃上的迷你条与链路墨色 ─────────────────────────
    基础 .widget-shell 的墨是浅玻璃用的深墨；迷你条/链路是新元素，
@@ -7750,4 +8086,160 @@ html:has(.strip-shell--detail-open.strip-shell--glass-clear) #root::after {
    （clear 档带 :not 是 (0,4,0)，这里同 (0,4,0) 靠源码顺序赢平局）。 */
 .widget-shell--transparent .tasks-window-body .tasks-card .widget-task-group:last-child {
   box-shadow: none;
+}
+
+/* ── 自绘提醒角标窗（六案 B·自绘壳）：右下角玻璃卡堆，任务小组件同款皮肤 ── */
+.badge-window {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: visible;
+}
+.badge-empty {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.45);
+  background: rgba(29, 32, 38, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 11px;
+}
+.badge-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.badge-toast {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 13px 12px;
+  border-radius: 11px;
+  background: rgba(29, 32, 38, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), inset 0 1px rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  overflow: hidden;
+  animation: badge-slide-in 220ms var(--motion, ease-out);
+  color: rgba(255, 255, 255, 0.92);
+}
+@keyframes badge-slide-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.badge-glyph {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+.badge-toast--fail .badge-glyph { background: rgba(236, 122, 99, 0.16); color: #ec7a63; }
+.badge-toast--ok .badge-glyph { background: rgba(111, 196, 154, 0.16); color: #6fc49a; }
+.badge-toast--merge .badge-glyph { background: rgba(224, 176, 96, 0.16); color: #e0b060; }
+.badge-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.badge-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.badge-toast--fail .badge-title { color: #ff9c9c; }
+.badge-toast--ok .badge-title { color: #8fd4b4; }
+.badge-toast--merge .badge-title { color: #eab86a; }
+.badge-body {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.62);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.badge-meta {
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.35);
+  font-variant-numeric: tabular-nums;
+}
+.badge-x {
+  flex: none;
+  padding: 0 3px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+}
+.badge-x:hover { color: rgba(255, 255, 255, 0.8); }
+.badge-countdown {
+  position: absolute;
+  left: 13px;
+  right: 13px;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.32);
+}
+.badge-toast--fail .badge-countdown { background: rgba(236, 122, 99, 0.55); }
+.badge-toast--ok .badge-countdown { background: rgba(111, 196, 154, 0.55); }
+.badge-toast--merge .badge-countdown { background: rgba(224, 176, 96, 0.55); }
+.badge-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 2px 0;
+}
+.badge-close {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font-family: inherit;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 160ms var(--motion, ease-out);
+}
+.badge-window:hover .badge-close { opacity: 1; }
+.badge-close:hover { color: rgba(255, 255, 255, 0.75); }
+
+/* 浅色玻璃档的墨色 */
+.widget-shell--glass-light .badge-empty { color: rgba(31, 33, 36, 0.5); background: rgba(255, 255, 255, 0.7); border-color: rgba(31, 33, 36, 0.1); }
+.widget-shell--glass-light .badge-toast { background: rgba(255, 255, 255, 0.82); border-color: rgba(31, 33, 36, 0.1); color: rgba(31, 33, 36, 0.92); box-shadow: 0 10px 26px rgba(31, 33, 36, 0.18); }
+.widget-shell--glass-light .badge-toast--fail .badge-title { color: #a1402e; }
+.widget-shell--glass-light .badge-toast--ok .badge-title { color: #1f7a4d; }
+.widget-shell--glass-light .badge-toast--merge .badge-title { color: #8a5f14; }
+.widget-shell--glass-light .badge-body { color: rgba(31, 33, 36, 0.6); }
+.widget-shell--glass-light .badge-meta { color: rgba(31, 33, 36, 0.4); }
+.widget-shell--glass-light .badge-x { color: rgba(31, 33, 36, 0.35); }
+.widget-shell--glass-light .badge-x:hover { color: rgba(31, 33, 36, 0.8); }
+.widget-shell--glass-light .badge-close { color: rgba(31, 33, 36, 0.35); }
+
+/* 监控参数网格里的勾选项：标签可换行、勾框与首行对齐；
+   --wide = 免打扰这类"一对输入框的表头开关"，独占整行 */
+.monitor-grid .monitor-field--check {
+  align-items: flex-start;
+}
+.monitor-grid .monitor-field--check input {
+  margin-top: 2px;
+}
+.monitor-grid .monitor-field--check span {
+  line-height: 1.5;
+}
+.monitor-field--check--wide {
+  grid-column: 1 / -1;
 }

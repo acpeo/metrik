@@ -507,6 +507,10 @@ pub struct GatewayTask {
     pub child_session_key: Option<String>,
     #[serde(default)]
     pub run_id: Option<String>,
+    /// 任务源 id：automation_run 行 = 定时任务 UUID（cron.list 的 job.id），
+    /// 定时任务看板用它对账"该 job 上次运行结果"。
+    #[serde(default)]
+    pub source_id: Option<String>,
     #[serde(default)]
     pub created_at: Option<i64>,
     #[serde(default)]
@@ -522,6 +526,12 @@ pub struct GatewayTask {
     /// 运行中任务的一句话进度（网关 tasks.list 的 progressSummary，原话透传）。
     #[serde(default)]
     pub progress_summary: Option<String>,
+    /// cli 行（子 agent run）累计工具调用次数 / 最后一次工具名（tasks.list 实测
+    /// 仅 kind=cli 携带）——实时工具流水小版的数据源。
+    #[serde(default)]
+    pub tool_use_count: Option<i64>,
+    #[serde(default)]
+    pub last_tool_name: Option<String>,
     #[serde(default)]
     pub label: Option<String>,
 }
@@ -822,6 +832,9 @@ pub fn upsert_tasks(
             terminal_summary TEXT,
             error          TEXT,
             progress_summary TEXT,
+            tool_use_count INTEGER,
+            last_tool_name TEXT,
+            source_id      TEXT,
             first_seen_ms  INTEGER NOT NULL,
             last_seen_ms   INTEGER NOT NULL,
             PRIMARY KEY (task_id, gateway)
@@ -832,6 +845,11 @@ pub fn upsert_tasks(
     // 老账本补列：progress_summary 是后加字段，已有库 ALTER 补上
     //（新库建表已带列，ALTER 报 duplicate column 直接忽略）。
     let _ = connection.execute_batch("ALTER TABLE gateway_task ADD COLUMN progress_summary TEXT");
+    // 实时工具流水小版（2026-10-04 六案⑤）：cli 行的调用数/最后工具名。
+    let _ = connection.execute_batch("ALTER TABLE gateway_task ADD COLUMN tool_use_count INTEGER");
+    let _ = connection.execute_batch("ALTER TABLE gateway_task ADD COLUMN last_tool_name TEXT");
+    // 定时任务看板（六案③）：automation_run 行的 job UUID，看板对账上次结果用。
+    let _ = connection.execute_batch("ALTER TABLE gateway_task ADD COLUMN source_id TEXT");
     let mut written = 0usize;
     for task in &snapshot.tasks {
         let task_id = match task.task_id.as_deref().filter(|id| !id.is_empty()) {
@@ -858,10 +876,11 @@ pub fn upsert_tasks(
         connection.execute(
             "INSERT INTO gateway_task (
                 task_id, gateway, runtime, kind, status, title, label, agent_id,
-                session_key, child_session_key, run_id,
+                session_key, child_session_key, run_id, source_id,
                 created_at_ms, started_at_ms, ended_at_ms, updated_at_ms,
-                terminal_summary, error, progress_summary, first_seen_ms, last_seen_ms
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)
+                terminal_summary, error, progress_summary,
+                tool_use_count, last_tool_name, first_seen_ms, last_seen_ms
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)
             ON CONFLICT(task_id, gateway) DO UPDATE SET
                 runtime = COALESCE(excluded.runtime, runtime),
                 kind = COALESCE(excluded.kind, kind),
@@ -872,6 +891,7 @@ pub fn upsert_tasks(
                 session_key = COALESCE(excluded.session_key, session_key),
                 child_session_key = COALESCE(excluded.child_session_key, child_session_key),
                 run_id = COALESCE(excluded.run_id, run_id),
+                source_id = COALESCE(excluded.source_id, source_id),
                 created_at_ms = COALESCE(created_at_ms, excluded.created_at_ms),
                 started_at_ms = COALESCE(started_at_ms, excluded.started_at_ms),
                 ended_at_ms = COALESCE(excluded.ended_at_ms, ended_at_ms),
@@ -879,6 +899,8 @@ pub fn upsert_tasks(
                 terminal_summary = COALESCE(excluded.terminal_summary, terminal_summary),
                 error = COALESCE(excluded.error, error),
                 progress_summary = COALESCE(excluded.progress_summary, progress_summary),
+                tool_use_count = COALESCE(excluded.tool_use_count, tool_use_count),
+                last_tool_name = COALESCE(excluded.last_tool_name, last_tool_name),
                 last_seen_ms = excluded.last_seen_ms",
             rusqlite::params![
                 task_id,
@@ -892,6 +914,7 @@ pub fn upsert_tasks(
                 task.session_key,
                 task.child_session_key,
                 task.run_id,
+                task.source_id,
                 task.created_at,
                 task.started_at,
                 task.ended_at,
@@ -899,6 +922,8 @@ pub fn upsert_tasks(
                 task.terminal_summary,
                 task.error,
                 task.progress_summary,
+                task.tool_use_count,
+                task.last_tool_name,
                 snapshot.collected_at_ms,
                 snapshot.collected_at_ms,
             ],
@@ -955,6 +980,8 @@ pub struct GatewayTaskRow {
     pub session_key: Option<String>,
     pub child_session_key: Option<String>,
     pub run_id: Option<String>,
+    /// automation_run 行 = 定时任务 UUID（看板对账上次结果）。
+    pub source_id: Option<String>,
     pub created_at_ms: Option<i64>,
     pub started_at_ms: Option<i64>,
     pub ended_at_ms: Option<i64>,
@@ -964,6 +991,8 @@ pub struct GatewayTaskRow {
     pub first_seen_ms: i64,
     pub last_seen_ms: i64,
     pub progress_summary: Option<String>,
+    pub tool_use_count: Option<i64>,
+    pub last_tool_name: Option<String>,
 }
 
 /// 读本地任务账本：按 last_seen 倒序，可选状态过滤与行数上限。
@@ -993,6 +1022,9 @@ pub fn list_tasks(
             terminal_summary TEXT,
             error          TEXT,
             progress_summary TEXT,
+            tool_use_count INTEGER,
+            last_tool_name TEXT,
+            source_id      TEXT,
             first_seen_ms  INTEGER NOT NULL,
             last_seen_ms   INTEGER NOT NULL,
             PRIMARY KEY (task_id, gateway)
@@ -1007,9 +1039,9 @@ pub fn list_tasks(
     };
     let sql = format!(
         "SELECT task_id, gateway, runtime, kind, status, title, label, agent_id, \
-         session_key, child_session_key, run_id, created_at_ms, started_at_ms, \
+         session_key, child_session_key, run_id, source_id, created_at_ms, started_at_ms, \
          ended_at_ms, updated_at_ms, terminal_summary, error, first_seen_ms, last_seen_ms, \
-         progress_summary \
+         progress_summary, tool_use_count, last_tool_name \
          FROM gateway_task WHERE {where_clause} \
          ORDER BY COALESCE(updated_at_ms, last_seen_ms) DESC LIMIT {limit}"
     );
@@ -1029,15 +1061,185 @@ pub fn list_tasks(
             session_key: row.get(8)?,
             child_session_key: row.get(9)?,
             run_id: row.get(10)?,
-            created_at_ms: row.get(11)?,
-            started_at_ms: row.get(12)?,
-            ended_at_ms: row.get(13)?,
-            updated_at_ms: row.get(14)?,
-            terminal_summary: row.get(15)?,
-            error: row.get(16)?,
-            first_seen_ms: row.get(17)?,
-            last_seen_ms: row.get(18)?,
-            progress_summary: row.get(19)?,
+            source_id: row.get(11)?,
+            created_at_ms: row.get(12)?,
+            started_at_ms: row.get(13)?,
+            ended_at_ms: row.get(14)?,
+            updated_at_ms: row.get(15)?,
+            terminal_summary: row.get(16)?,
+            error: row.get(17)?,
+            first_seen_ms: row.get(18)?,
+            last_seen_ms: row.get(19)?,
+            progress_summary: row.get(20)?,
+            tool_use_count: row.get(21)?,
+            last_tool_name: row.get(22)?,
+        });
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// 定时任务看板（2026-10-04 六案③）：cron.list 只读镜像到本地。
+// 实测（18791 隧道）：cron.list 用 operator.read 就能读，其余 automations.*
+// 别名都要 admin；返回 {jobs,snapshotRevision,total,...}，job 带
+// id/name/description/enabled/schedule{kind,expr}。数据变化以分钟计，
+// 镜像按 60 秒节流拉取，读回走本地表（不联网）。
+// ---------------------------------------------------------------------------
+
+/// cron.list 的 job 行（看板所需字段子集）。
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayCronJob {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub schedule: Option<CronSchedule>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CronSchedule {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub expr: Option<String>,
+}
+
+/// 看板一行（serde 序列化后直接给前端）。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayCronRow {
+    pub id: String,
+    pub gateway: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub enabled: bool,
+    pub schedule_expr: Option<String>,
+    pub updated_at_ms: i64,
+}
+
+/// cron.list 看板节流：数据变化以分钟计，60 秒拉一次足够。
+const CRON_SNAPSHOT_MIN_INTERVAL_MS: u64 = 60_000;
+
+pub fn fetch_crons(target: &GatewayTarget) -> Result<Vec<GatewayCronJob>> {
+    let identity_dir = match &target.identity_dir {
+        Some(dir) => dir.clone(),
+        None => default_state_dir(),
+    };
+    let identity = load_or_create_identity(&identity_dir)?;
+    let mut client = GatewayClient::connect(target, &identity)?;
+    let payload = client.call("cron.list", json!({}))?;
+    let jobs = payload
+        .get("jobs")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| serde_json::from_value::<GatewayCronJob>(value.clone()).ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(jobs)
+}
+
+fn ensure_gateway_cron_table(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS gateway_cron (
+            id            TEXT NOT NULL,
+            gateway       TEXT NOT NULL,
+            name          TEXT,
+            description   TEXT,
+            enabled       INTEGER NOT NULL DEFAULT 1,
+            schedule_expr TEXT,
+            updated_at_ms INTEGER NOT NULL,
+            PRIMARY KEY (id, gateway)
+        );",
+    )?;
+    Ok(())
+}
+
+/// 镜像 cron.list 全量 job（INSERT OR REPLACE：看板是现状镜像，不是账本，
+/// 网关侧删掉的 job 下次全量对齐时自然消失——不追加删除逻辑）。
+pub fn upsert_crons(
+    connection: &Connection,
+    target_label: &str,
+    crons: &[GatewayCronJob],
+) -> Result<usize> {
+    ensure_gateway_cron_table(connection)?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut written = 0usize;
+    for cron in crons {
+        let Some(id) = cron.id.as_deref().filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        connection.execute(
+            "INSERT INTO gateway_cron (id, gateway, name, description, enabled, schedule_expr, updated_at_ms)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(id, gateway) DO UPDATE SET
+                name = COALESCE(excluded.name, name),
+                description = COALESCE(excluded.description, description),
+                enabled = excluded.enabled,
+                schedule_expr = COALESCE(excluded.schedule_expr, schedule_expr),
+                updated_at_ms = excluded.updated_at_ms",
+            rusqlite::params![
+                id,
+                target_label,
+                cron.name,
+                cron.description,
+                cron.enabled.unwrap_or(true),
+                cron.schedule.as_ref().and_then(|s| s.expr.clone()),
+                now,
+            ],
+        )?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+/// 拉取 + 落镜像，带 60 秒节流（前端每拍调用也只真连一次每分钟）。
+pub fn snapshot_gateway_crons_throttled(
+    connection: &Connection,
+    target: &GatewayTarget,
+    last_fetch: &mut Option<(String, Instant)>,
+) -> Result<usize> {
+    if let Some((label, at)) = last_fetch {
+        if label == &target.label && at.elapsed() < Duration::from_millis(CRON_SNAPSHOT_MIN_INTERVAL_MS) {
+            return Ok(0);
+        }
+    }
+    let crons = fetch_crons(target)?;
+    let written = upsert_crons(connection, &target.label, &crons)?;
+    *last_fetch = Some((target.label.clone(), Instant::now()));
+    Ok(written)
+}
+
+/// 读本地定时任务镜像：名称字母序，可选行数上限。
+pub fn list_crons(connection: &Connection, limit: Option<u32>) -> Result<Vec<GatewayCronRow>> {
+    ensure_gateway_cron_table(connection)?;
+    let limit = limit.unwrap_or(200).min(2000);
+    let sql = format!(
+        "SELECT id, gateway, name, description, enabled, schedule_expr, updated_at_ms \
+         FROM gateway_cron \
+         ORDER BY enabled DESC, name ASC LIMIT {limit}"
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let mut rows = statement.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(GatewayCronRow {
+            id: row.get(0)?,
+            gateway: row.get(1)?,
+            name: row.get(2)?,
+            description: row.get(3)?,
+            enabled: row.get::<_, i64>(4)? != 0,
+            schedule_expr: row.get(5)?,
+            updated_at_ms: row.get(6)?,
         });
     }
     Ok(out)
@@ -1091,6 +1293,7 @@ fn ensure_session_run_table(connection: &Connection) -> Result<()> {
             status        TEXT,
             error         TEXT,
             progress_summary TEXT,
+            terminal_summary TEXT,
             model         TEXT,
             started_at_ms INTEGER,
             ended_at_ms   INTEGER,
@@ -1103,6 +1306,8 @@ fn ensure_session_run_table(connection: &Connection) -> Result<()> {
     // 0.20.11 及之前建的表没有 fallback_title：补列（重复执行报重复列，忽略）。
     // 真标题可升级（extract 到原话时覆盖回落），回落只补空——两列分开存。
     let _ = connection.execute_batch("ALTER TABLE session_run ADD COLUMN fallback_title TEXT;");
+    // 0.20.13 成果速览（2026-10-04 六案①）：收行时抓最后一跳 assistant 原话。
+    let _ = connection.execute_batch("ALTER TABLE session_run ADD COLUMN terminal_summary TEXT;");
     Ok(())
 }
 
@@ -1228,6 +1433,22 @@ fn record_session_runs(
                 rusqlite::params![id, status, error, session.ended_at, now, fallback_title],
             )?;
             written += 1;
+            // 成果速览（2026-10-04 六案①）：收行时补拉一次 chat.history，
+            // 最后一跳 assistant 原话 = 该轮的中文结论（北斗巡检/汇报）。失败
+            // 静默——行照收，只是没有摘要。
+            if let Some(client) = client.as_deref_mut() {
+                if let Ok(payload) = client.call(
+                    "chat.history",
+                    json!({"sessionKey": session.key, "limit": 12}),
+                ) {
+                    if let Some(summary) = extract_run_summary(&payload) {
+                        let _ = connection.execute(
+                            "UPDATE session_run SET terminal_summary = ?2 WHERE id = ?1",
+                            rusqlite::params![id, summary],
+                        );
+                    }
+                }
+            }
         } else if let Some(ended) = session.ended_at {
             // 漏采补记：短 run 在两拍之间结束，从没被观测为 running。
             if now - ended > options.missed_window_ms {
@@ -1250,10 +1471,20 @@ fn record_session_runs(
                 continue;
             }
             let (status, error) = session_run_terminal_status(session);
+            // 成果速览：漏采补记同样抓收工结论（结束 ≤ 漏采窗口，消息尾还在）。
+            let mut summary = None;
+            if let Some(client) = client.as_deref_mut() {
+                if let Ok(payload) = client.call(
+                    "chat.history",
+                    json!({"sessionKey": session.key, "limit": 12}),
+                ) {
+                    summary = extract_run_summary(&payload);
+                }
+            }
             connection.execute(
                 "INSERT INTO session_run (gateway, session_key, agent_id, status, error, \
-                 model, fallback_title, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)",
+                 model, fallback_title, terminal_summary, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",
                 rusqlite::params![
                     target_label,
                     session.key,
@@ -1262,6 +1493,7 @@ fn record_session_runs(
                     error,
                     session.model,
                     fallback_title,
+                    summary,
                     session.started_at.unwrap_or(ended),
                     ended,
                     now
@@ -1383,6 +1615,34 @@ fn extract_last_tool_progress(payload: &Value) -> Option<String> {
     None
 }
 
+/// 成果摘要（2026-10-04 六案①）= 最后一跳 assistant 消息原话：星位收工时的
+/// 中文结论（巡检发现了什么、汇报写了什么）。工具调用/结果消息（带 toolName）
+/// 不是结论，跳过；与标题同一隐私口径：只取前 200 字，只落本地台账。
+fn extract_run_summary(payload: &Value) -> Option<String> {
+    let messages = payload.get("messages")?.as_array()?;
+    for message in messages.iter().rev() {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        if message.get("toolName").and_then(Value::as_str).is_some() {
+            continue;
+        }
+        let Some(raw) = session_content_text(message.get("content")) else {
+            continue;
+        };
+        let text = trim_system_suffix(raw.trim());
+        if text.is_empty() {
+            continue;
+        }
+        let mut out: String = text.chars().take(200).collect();
+        if text.chars().count() > 200 {
+            out.push('…');
+        }
+        return Some(out);
+    }
+    None
+}
+
 /// 会话工作台账的查询行（serde 序列化后直接给前端）。
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1398,6 +1658,8 @@ pub struct SessionRunRow {
     pub status: Option<String>,
     pub error: Option<String>,
     pub progress_summary: Option<String>,
+    /// 收行时抓的最后一跳 assistant 原话（成果速览；running 行为空）。
+    pub terminal_summary: Option<String>,
     pub model: Option<String>,
     pub started_at_ms: Option<i64>,
     pub ended_at_ms: Option<i64>,
@@ -1414,7 +1676,7 @@ pub fn list_session_runs(
     let limit = limit.unwrap_or(300).min(2000);
     let sql = format!(
         "SELECT id, gateway, session_key, agent_id, run_id, title, fallback_title, status, error, \
-         progress_summary, model, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms \
+         progress_summary, terminal_summary, model, started_at_ms, ended_at_ms, first_seen_ms, last_seen_ms \
          FROM session_run \
          ORDER BY COALESCE(ended_at_ms, last_seen_ms) DESC LIMIT {limit}"
     );
@@ -1433,11 +1695,12 @@ pub fn list_session_runs(
             status: row.get(7)?,
             error: row.get(8)?,
             progress_summary: row.get(9)?,
-            model: row.get(10)?,
-            started_at_ms: row.get(11)?,
-            ended_at_ms: row.get(12)?,
-            first_seen_ms: row.get(13)?,
-            last_seen_ms: row.get(14)?,
+            terminal_summary: row.get(10)?,
+            model: row.get(11)?,
+            started_at_ms: row.get(12)?,
+            ended_at_ms: row.get(13)?,
+            first_seen_ms: row.get(14)?,
+            last_seen_ms: row.get(15)?,
         });
     }
     Ok(out)
@@ -1885,5 +2148,91 @@ mod tests {
         let runs = list_session_runs(&connection, None).unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn extract_run_summary_takes_last_plain_assistant_text() {
+        let payload = json!({
+            "messages": [
+                {"role": "user", "content": "天枢，巡检"},
+                {"role": "assistant", "content": "开始巡检", "toolName": "exec"},
+                {"role": "toolResult", "content": "ok", "toolName": "exec"},
+                {"role": "assistant", "content": [{"text": "巡检完成：发现 1 处卡点，已补发续跑卡。"}]},
+            ]
+        });
+        let summary = extract_run_summary(&payload).unwrap();
+        assert!(summary.starts_with("巡检完成"));
+        // 纯工具流、没有 assistant 正文 → 无摘要
+        let empty = json!({"messages": [
+            {"role": "toolResult", "content": "ok", "toolName": "exec"}
+        ]});
+        assert_eq!(extract_run_summary(&empty), None);
+        // 超长截 200 字
+        let long = json!({"messages": [
+            {"role": "assistant", "content": "长".repeat(260)}
+        ]});
+        let summary = extract_run_summary(&long).unwrap();
+        assert_eq!(summary.chars().count(), 201);
+        assert!(summary.ends_with('…'));
+    }
+
+    #[test]
+    fn cron_mirror_upsert_and_list_roundtrip() {
+        let connection = memory_db();
+        let job = |id: &str, name: &str, enabled: bool, expr: &str| GatewayCronJob {
+            id: Some(id.to_owned()),
+            name: Some(name.to_owned()),
+            description: Some(format!("{name} 描述")),
+            enabled: Some(enabled),
+            schedule: Some(CronSchedule {
+                kind: Some("cron".to_owned()),
+                expr: Some(expr.to_owned()),
+            }),
+        };
+        let crons = vec![
+            job("j1", "北斗巡检", true, "0 14 * * *"),
+            job("j2", "heartbeat", false, "*/30 * * * *"),
+        ];
+        assert_eq!(upsert_crons(&connection, "vps", &crons).unwrap(), 2);
+        let rows = list_crons(&connection, None).unwrap();
+        assert_eq!(rows.len(), 2);
+        // 启用的排前面（enabled DESC, name ASC）
+        assert_eq!(rows[0].id, "j1");
+        assert_eq!(rows[0].schedule_expr.as_deref(), Some("0 14 * * *"));
+        assert!(rows[0].enabled);
+        assert!(!rows[1].enabled);
+        // 重复写入 = 现状镜像（更新覆盖，不堆行）
+        assert_eq!(upsert_crons(&connection, "vps", &crons).unwrap(), 2);
+        assert_eq!(list_crons(&connection, None).unwrap().len(), 2);
+        // 无 id 的脏行跳过不炸
+        let dirty = vec![GatewayCronJob::default()];
+        assert_eq!(upsert_crons(&connection, "vps", &dirty).unwrap(), 0);
+    }
+
+    #[test]
+    fn gateway_task_parses_source_id_camel_case() {
+        let raw = json!({
+            "taskId": "t1", "kind": "automation_run", "status": "completed",
+            "sourceId": "7329ce55-66e7"
+        });
+        let task: GatewayTask = serde_json::from_value(raw).unwrap();
+        assert_eq!(task.source_id.as_deref(), Some("7329ce55-66e7"));
+        let bare: GatewayTask = serde_json::from_value(json!({"taskId": "t2"})).unwrap();
+        assert_eq!(bare.source_id, None);
+    }
+
+    #[test]
+    fn gateway_task_parses_cli_tool_fields_camel_case() {
+        let raw = json!({
+            "taskId": "t1", "kind": "cli", "status": "running",
+            "toolUseCount": 6, "lastToolName": "exec"
+        });
+        let task: GatewayTask = serde_json::from_value(raw).unwrap();
+        assert_eq!(task.tool_use_count, Some(6));
+        assert_eq!(task.last_tool_name.as_deref(), Some("exec"));
+        // 缺字段不炸
+        let bare: GatewayTask = serde_json::from_value(json!({"taskId": "t2"})).unwrap();
+        assert_eq!(bare.tool_use_count, None);
+        assert_eq!(bare.last_tool_name, None);
     }
 }

@@ -11,8 +11,10 @@ import {
 } from "./trayBadge.js";
 import {
   desyncHealRetryDelayMs,
+  edgeDockHiddenPosition,
   floatingViewportSize,
   isDockAnchorPosition,
+  isDockGeometryCurrent,
   isStableFloatingMode,
   monitorForWindowPosition,
   physicalWindowSize,
@@ -682,8 +684,8 @@ async function onMacAgentSelection(handler) {
 }
 
 /// 拖动结束后持久化窗口位置（compact 与 strip 各记各的；expanded 不记）。
-// 任务小组件参与位置记忆但不参与边缘挂靠（canDock 仍用 isStableFloatingMode）：
-// 它有自己的置顶/显隐语义，"拖到屏幕上缘就藏起来"不是它的行为。
+// 任务小组件参与位置记忆；边缘挂靠是否放行由 startEdgeDock 的 canDockTasksWidget
+// 按设置决定（默认关）——挂靠语义与主窗同一套，这里不再重复判断。
 function positionMemoAllowed(mode, transient) {
   if (mode === "tasks-widget") return !transient;
   return isStableFloatingMode(mode, transient);
@@ -1671,7 +1673,9 @@ function setPinnedHoverTargetOpacity(opacity) {
 
 /// 边缘挂靠：未固定的卡片和胶囊条可贴四边自动收起，只留一条细边。
 /// 细边落在窗口的非客户区，webview 收不到 hover，因此以全局光标位置判断显示。
-async function startEdgeDock({ getMode, getPinned }) {
+/// 任务小组件默认不参与（它有自己的置顶/显隐语义）；设置里勾了
+/// "贴边自动隐藏"后由 canDockTasksWidget 放行，挂靠语义与主窗完全同一套。
+async function startEdgeDock({ getMode, getPinned, canDockTasksWidget }) {
   // Wayland 不提供全局指针与窗口坐标；Linux 的 X11 会话可以正常启用。
   if (isMacPlatform() || (isLinuxPlatform() && !(await supportsGlobalWindowCoordinates()))) {
     return () => {};
@@ -1687,22 +1691,15 @@ async function startEdgeDock({ getMode, getPinned }) {
   let pollTimer;
   let alwaysOnTopQueue = Promise.resolve();
 
-  const canDock = () => isStableFloatingMode(
-    getMode(),
-    Boolean(stripHoverRestore),
-  );
+  const canDock = () => {
+    const mode = getMode();
+    if (mode === "tasks-widget") return canDockTasksWidget ? Boolean(canDockTasksWidget()) : false;
+    return isStableFloatingMode(mode, Boolean(stripHoverRestore));
+  };
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const peek = () => Math.round(DOCK_PEEK_PX * dock.scale);
   const exposedPosition = () => ({ x: dock.x, y: dock.y });
-  const hiddenPosition = () => {
-    const visible = peek();
-    switch (dock.edge) {
-      case "bottom": return { x: dock.x, y: dock.bottom - visible };
-      case "left": return { x: dock.left - dock.width + visible, y: dock.y };
-      case "right": return { x: dock.right - visible, y: dock.y };
-      default: return { x: dock.x, y: dock.top - dock.height + visible };
-    }
-  };
+  const hiddenPosition = () => edgeDockHiddenPosition(dock, DOCK_PEEK_PX);
   const slideTo = async (position) => {
     if (!dock) return;
     await win.setPosition(new api.PhysicalPosition(position.x, position.y)).catch(() => {});
@@ -1720,6 +1717,13 @@ async function startEdgeDock({ getMode, getPinned }) {
   const stopPoll = () => {
     window.clearInterval(pollTimer);
     pollTimer = undefined;
+  };
+
+  // 挂靠几何重估统一走这里：onMoved 去抖 220ms，轮询里的锚点自校验同样，
+  // 避免拖动途中被轮询抢先按中间坐标重新贴边。
+  const scheduleCheck = () => {
+    window.clearTimeout(checkTimer);
+    checkTimer = window.setTimeout(check, 220);
   };
 
   // 用户从已挂靠的边缘开始拖动时只清理旧状态，不把窗口“恢复”回旧锚点。
@@ -1745,6 +1749,19 @@ async function startEdgeDock({ getMode, getPinned }) {
     if (disposed || !dock) return;
     if (getPinned() || !canDock()) {
       await undock();
+      return;
+    }
+    // 锚点自校验：展开/折叠面板这类程序化改尺寸、或外力位移，都会让挂靠
+    // 记录的几何过期——按"用户拖动"同一语义释放并重估，不拿旧锚点把窗口
+    // 拉回或误判光标离开。收起态先滑回显形位再释放，窗口不至于滞留屏外。
+    const [currentPos, currentSize] = await Promise.all([
+      win.outerPosition().catch(() => null),
+      win.outerSize().catch(() => null),
+    ]);
+    if (currentPos && currentSize && !isDockGeometryCurrent(currentPos, currentSize, dock, hidden)) {
+      if (hidden) await slideTo(exposedPosition());
+      releaseDockForDrag();
+      scheduleCheck();
       return;
     }
     const cursor = await api.cursorPosition().catch(() => null);
@@ -1837,8 +1854,7 @@ async function startEdgeDock({ getMode, getPinned }) {
       const anchor = hidden ? hiddenPosition() : exposedPosition();
       if (!isDockAnchorPosition(event?.payload, anchor)) releaseDockForDrag();
     }
-    window.clearTimeout(checkTimer);
-    checkTimer = window.setTimeout(check, 220);
+    scheduleCheck();
   };
   const unlistenPromise = win.onMoved(onMove);
   check();
@@ -1937,6 +1953,90 @@ async function onTasksWidgetVisibility(handler) {
   return listen("tasks://tasks-widget-visibility", (event) => handler(Boolean(event.payload)));
 }
 
+/// 自绘提醒角标窗（六案 B·自绘壳）：与任务小组件同一套幂等开关。
+async function setNotificationWindow(visible) {
+  if (!isDesktop()) return;
+  await invoke("set_notification_window", { visible }).catch((error) => {
+    console.warn("Unable to set the notification window.", error);
+  });
+}
+
+async function onNotificationVisibility(handler) {
+  if (!isDesktop()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("tasks://notification-visibility", (event) => handler(Boolean(event.payload)));
+}
+
+/// 提醒卡点击 → Rust 仲裁：小组件在就展开面板，不在就唤主窗切任务页（A 案）。
+async function expandRoundDetails() {
+  if (!isDesktop()) return;
+  await invoke("expand_round_details").catch((error) => {
+    console.warn("Unable to expand round details.", error);
+  });
+}
+
+/// 任务小组件窗收到的"展开面板"广播（提醒卡点击的 A 案落点）。
+async function onPanelExpand(handler) {
+  if (!isDesktop()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("tasks://panel-expand", () => handler());
+}
+
+/// 提醒窗自管显隐：卡堆空了自藏、来卡自弹（总开关是另一层，见 setNotificationWindow）。
+async function setSelfWindowVisible(visible) {
+  if (!isDesktop()) return;
+  const api = await windowApi();
+  if (!api) return;
+  const win = api.getCurrentWindow();
+  await (visible ? win.show() : win.hide()).catch(() => {});
+}
+
+/// 提醒窗底边锚定改高：窗口高度 = 卡堆实高，底边钉在任务栏上方。
+/// setSize 默认向下长，必须每改一次重钉底边，否则卡堆越长越往下掉。
+async function repinNotificationWindow(heightPx) {
+  if (!isDesktop()) return;
+  const api = await windowApi();
+  if (!api) return;
+  const win = api.getCurrentWindow();
+  const scale = await win.scaleFactor().catch(() => 1);
+  const width = Math.ceil(344 * scale);
+  const height = Math.max(1, Math.ceil(heightPx * scale));
+  try {
+    const monitor = await win.currentMonitor();
+    if (!monitor) {
+      await win.setSize(new api.PhysicalSize(width, height));
+      return;
+    }
+    const bottom = monitor.position.y + monitor.size.y - Math.round(50 * scale);
+    const x = monitor.position.x + monitor.size.x - Math.round((344 + 16) * scale);
+    await win.setSize(new api.PhysicalSize(width, height));
+    await win.setPosition(new api.PhysicalPosition(x, bottom - height));
+  } catch {
+    await win.setSize(new api.PhysicalSize(width, height)).catch(() => {});
+  }
+}
+
+/// 主窗收到的"切到任务页"广播（小组件不在时的 A 案兜底落点）。
+async function onNavTasks(handler) {
+  if (!isDesktop()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("tasks://nav-tasks", () => handler());
+}
+
+/// 星位名映射广播：各窗口 localStorage 不共享，提醒窗拿不到主窗的
+/// agentNameMap——主窗定期广播，提醒窗监听缓存（预览环境用 localStorage 种子）。
+async function emitAgentNames(map) {
+  if (!isDesktop()) return;
+  const { emit } = await import("@tauri-apps/api/event");
+  await emit("tasks://agent-names", map ?? {}).catch(() => {});
+}
+
+async function onAgentNames(handler) {
+  if (!isDesktop()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("tasks://agent-names", (event) => handler(event.payload || {}));
+}
+
 /// 主窗口唤到前台并切完整视图（任务小组件底栏的"完整视图"用）。
 async function showMainExpanded() {
   if (!isDesktop()) return;
@@ -1950,6 +2050,123 @@ async function resizeCurrentWindow(width, height) {
   const api = await windowApi();
   if (!api) return;
   await api.getCurrentWindow().setSize(new api.LogicalSize(width, height)).catch(() => {});
+}
+
+/// 任务小组件展开面板的尺寸边界：用户可拖拽调宽高，胶囊态要收回 42/224×36，
+/// 所以边界不能写进 Rust 建窗参数（会钳住胶囊），只在展开时动态开、折叠时撤。
+const TASKS_PANEL_MIN = { width: 280, height: 320 };
+const TASKS_PANEL_MAX = { width: 720, height: 1100 };
+const TASKS_PANEL_DEFAULT = { width: 320, height: 384 };
+const TASKS_PANEL_SIZE_KEY = "metrik:tasksPanelSize";
+
+function readSavedTasksPanelSize() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TASKS_PANEL_SIZE_KEY) || "null");
+    if (!raw || !Number.isFinite(raw.width) || !Number.isFinite(raw.height)) return null;
+    return {
+      width: Math.min(TASKS_PANEL_MAX.width, Math.max(TASKS_PANEL_MIN.width, Math.round(raw.width))),
+      height: Math.min(TASKS_PANEL_MAX.height, Math.max(TASKS_PANEL_MIN.height, Math.round(raw.height))),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/// 记住用户拖出来的面板尺寸（webview resize 去抖后调用）。
+function saveTasksPanelSize(width, height) {
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, Math.round(value)));
+  const clean = {
+    width: clamp(width, TASKS_PANEL_MIN.width, TASKS_PANEL_MAX.width),
+    height: clamp(height, TASKS_PANEL_MIN.height, TASKS_PANEL_MAX.height),
+  };
+  localStorage.setItem(TASKS_PANEL_SIZE_KEY, JSON.stringify(clean));
+  return clean;
+}
+
+/// 展开面板：放开可拖拽调尺寸，套上/下限，恢复用户上次拉出的尺寸
+/// （没有记忆用默认 320×384），最后钳回工作区——贴边挂靠的锚位与钳位边界
+/// 重合，不会互相打架；改完尺寸由挂靠轮询的锚点自校验自己重估。
+async function applyExpandedPanelSize() {
+  if (!isDesktop()) return;
+  const api = await windowApi();
+  if (!api) return;
+  const win = api.getCurrentWindow();
+  const saved = readSavedTasksPanelSize();
+  const width = saved?.width ?? TASKS_PANEL_DEFAULT.width;
+  const height = saved?.height ?? TASKS_PANEL_DEFAULT.height;
+  const before = await currentWindowRect(win);
+  await win.setResizable(true).catch(() => {});
+  await win.setMinSize(new api.LogicalSize(TASKS_PANEL_MIN.width, TASKS_PANEL_MIN.height)).catch(() => {});
+  await win.setMaxSize(new api.LogicalSize(TASKS_PANEL_MAX.width, TASKS_PANEL_MAX.height)).catch(() => {});
+  await win.setSize(new api.LogicalSize(width, height)).catch(() => {});
+  await clampIntoWorkArea(api, win);
+  await keepEdgeFlushAfterResize(api, win, before);
+}
+
+/// 折叠成迷你胶囊：解除展开态的尺寸下限（42/224 远小于 280×320）、锁死
+/// 原生拖拽（细条的边缘全是拖拽热区，会误触发调尺寸），再套固定尺寸。
+async function applyMiniCapsuleSize(width, height) {
+  if (!isDesktop()) return;
+  const api = await windowApi();
+  if (!api) return;
+  const win = api.getCurrentWindow();
+  const before = await currentWindowRect(win);
+  await win.setMinSize(null).catch(() => {});
+  await win.setResizable(false).catch(() => {});
+  await win.setSize(new api.LogicalSize(width, height)).catch(() => {});
+  await keepEdgeFlushAfterResize(api, win, before);
+  // WebView2 的合成/zoom 迁就经常晚于 setSize 返回（与主窗 reassertCompactSize
+  // 同一族问题）：视口比目标小 1-2px 时胶囊内容溢出，原生滚动条把 36px 细条
+  // 顶成滚动残废（0.20.12 真机截图）。慢一拍复核一次，尺寸不符就补发。
+  window.setTimeout(() => {
+    void (async () => {
+      const [current, scale] = await Promise.all([
+        win.outerSize().catch(() => null),
+        win.scaleFactor().catch(() => 1),
+      ]);
+      if (!current) return;
+      const wantW = Math.round(width * scale);
+      const wantH = Math.round(height * scale);
+      if (Math.abs(current.width - wantW) <= 2 && Math.abs(current.height - wantH) <= 2) return;
+      await win.setSize(new api.LogicalSize(width, height)).catch(() => {});
+    })();
+  }, 320);
+}
+
+async function currentWindowRect(win) {
+  const [pos, size] = await Promise.all([
+    win.outerPosition().catch(() => null),
+    win.outerSize().catch(() => null),
+  ]);
+  if (!pos || !size) return null;
+  return { x: pos.x, y: pos.y, width: size.width, height: size.height };
+}
+
+/// 程序化改尺寸后保持贴边：setSize 固定顶左角，贴右/下缘的窗口一缩就脱离
+/// 屏幕边，挂靠系统会因"不再贴边"而解除。改尺寸前若与某条工作区边缘平齐
+/// （≤8 逻辑像素，与挂靠触发阈值一致），改完后把那条边重新贴齐。
+async function keepEdgeFlushAfterResize(api, win, before) {
+  if (!before) return;
+  const [pos, size, monitor] = await Promise.all([
+    win.outerPosition().catch(() => null),
+    win.outerSize().catch(() => null),
+    api.currentMonitor().catch(() => null),
+  ]);
+  if (!pos || !size || !monitor) return;
+  const area = monitor.workArea || { position: monitor.position, size: monitor.size };
+  const left = area.position.x;
+  const top = area.position.y;
+  const right = left + area.size.width;
+  const bottom = top + area.size.height;
+  const trigger = Math.round(DOCK_TRIGGER_PX * (monitor.scaleFactor || 1));
+  let target = null;
+  if (Math.abs(before.x + before.width - right) <= trigger) target = { x: right - size.width, y: pos.y };
+  else if (Math.abs(before.x - left) <= trigger) target = { x: left, y: pos.y };
+  else if (Math.abs(before.y + before.height - bottom) <= trigger) target = { x: pos.x, y: bottom - size.height };
+  else if (Math.abs(before.y - top) <= trigger) target = { x: pos.x, y: top };
+  if (!target) return;
+  if (Math.abs(target.x - pos.x) <= 2 && Math.abs(target.y - pos.y) <= 2) return;
+  await win.setPosition(new api.PhysicalPosition(Math.round(target.x), Math.round(target.y))).catch(() => {});
 }
 
 /// 关闭当前窗口：Tauri 下走窗口 API（新附窗没有宿主 window.close 语义）。
@@ -2046,9 +2263,16 @@ export {
   normalizeUiScale,
   onMacAgentSelection,
   onMacAppearance,
+  expandRoundDetails,
   onScaleFactorChanged,
+  repinNotificationWindow,
+  setSelfWindowVisible,
   onTrayPinnedChange,
   onTrayShowExpanded,
+  onAgentNames,
+  onNavTasks,
+  onNotificationVisibility,
+  onPanelExpand,
   onTasksWidgetVisibility,
   openExpandedWindow,
   readStripScale,
@@ -2063,6 +2287,7 @@ export {
   setNativeTheme,
   updateMacStatusItems,
   updateTrayQuotaBadge,
+  setNotificationWindow,
   setStripScale,
   setWindowGlass,
   setTasksWidgetWindow,
@@ -2071,9 +2296,13 @@ export {
   collapseTasksHover,
   showMainExpanded,
   closeCurrentWindow,
+  emitAgentNames,
   emitGlassTint,
   onGlassTintChanged,
+  applyExpandedPanelSize,
+  applyMiniCapsuleSize,
   resizeCurrentWindow,
+  saveTasksPanelSize,
   setPinnedHoverBehavior,
   setPinnedHoverTargetOpacity,
   setWindowPinned,

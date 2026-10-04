@@ -2,17 +2,30 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  activeRelayEpisodes,
   agentDisplayName,
+  detectRoundNotifications,
+  isQuietNow,
+  benignStateOf,
   buildAgentNameMap,
   buildTaskChains,
   chainHopsFor,
+  cleanTaskTitle,
+  cronNextRunMs,
+  cronScheduleText,
+  failureClassOf,
+  groupSessionEpisodes,
+  isSubagentTask,
   hopGlyphOf,
+  listIdleSessions,
   hopToneOf,
   isActiveTask,
+  countIdleSessions,
   selectUsageSessions,
   sessionEpisodeHops,
   sessionErrorText,
   sessionRunHopStatus,
+  sessionRunHop,
   toolProgressLabel,
 } from "./taskChains.js";
 
@@ -94,47 +107,56 @@ test("agent name map resolves both gateway-prefixed and short agent ids", () => 
   assert.equal(agentDisplayName(map, undefined), "");
 });
 
-test("usage sessions drop cron/idless sessions, sort by recency, cap at limit", () => {
-  const now = Date.now();
+test("usage sessions: 只收有真实水位的会话，按水位降序（Leo 2026-10-04 定案：卡回答'谁快满了'，不做目录）", () => {
+  const now = 1_800_000_000_000;
   const sessions = [
-    { key: "agent:tianshu:cron:cb75:run:e1", updatedAt: now - 900 },
-    { key: "agent:yaoguang:feishu:group:oc_b15", isGroup: true, updatedAt: now - 100 },
-    { key: "agent:tianshu:main", updatedAt: now - 300 },
-    { key: "agent:tianxuan:feishu:group:oc_b15", isGroup: true, updatedAt: now - 200 },
-    { key: "agent:tianji:feishu:group:oc_b15" }, // 无 updatedAt：空闲脏数据，剔除
-    { key: "", updatedAt: now - 50 }, // 无 key，剔除
+    // 有水位的群会话：上卡，但按水位排——刚活跃的 40k 排在 154k 之后
+    { key: "agent:tianshu:feishu:group:oc_a", isGroup: true, estimatedPromptTokens: 40_000, contextTokenBudget: 525_000, updatedAt: now - 100 },
+    // 有水位的主会话：水位最高，排最前（哪怕 3 天没动）
+    { key: "agent:tianshu:main", isGroup: false, estimatedPromptTokens: 154_000, contextTokenBudget: 525_000, updatedAt: now - 3 * 24 * 3600_000 },
+    // 无水位的群会话：不逐行占位（Leo 截图里一排"预 525k"的病根）
+    { key: "agent:tianxuan:feishu:group:oc_a", isGroup: true, estimatedPromptTokens: null, updatedAt: now - 60_000 },
+    // cron 会话：永远排除
+    { key: "agent:tianshu:cron:cb75:run:e1", estimatedPromptTokens: 9_000, updatedAt: now - 50 },
+    // 0 水位 = 没聊过：不上卡
+    { key: "agent:kaiyang:feishu:group:oc_b", isGroup: true, estimatedPromptTokens: 0, updatedAt: now - 60 },
+    // 刚接活、思考中（运行中无水位）：无条件上卡且置顶（Leo 2026-10-04 补的场景）
+    { key: "agent:tianxuan:feishu:group:oc_b", isGroup: true, estimatedPromptTokens: null, hasActiveRun: true, updatedAt: now - 5 },
+    // 脏数据
+    { key: "", estimatedPromptTokens: 12_000 },
     null,
   ];
-  const picked = selectUsageSessions(sessions, { limit: 2, nowMs: now });
+  const picked = selectUsageSessions(sessions, { limit: 10 });
   assert.deepEqual(picked.map((session) => session.key), [
-    "agent:yaoguang:feishu:group:oc_b15",
-    "agent:tianxuan:feishu:group:oc_b15",
+    "agent:tianxuan:feishu:group:oc_b", // 运行中置顶
+    "agent:tianshu:main",
+    "agent:tianshu:feishu:group:oc_a",
   ]);
+  // limit 截断先保运行中，再按水位取最满的
+  const capped = selectUsageSessions(sessions, { limit: 1 });
+  assert.deepEqual(capped.map((session) => session.key), ["agent:tianxuan:feishu:group:oc_b"]);
+});
+
+test("countIdleSessions/listIdleSessions: 空闲数与清单口径一致（cron 不算）", () => {
+  const sessions = [
+    { key: "agent:a:main", estimatedPromptTokens: 100 },
+    { key: "agent:b:main", estimatedPromptTokens: null },
+    { key: "agent:c:feishu:group:g", isGroup: true },
+    { key: "agent:x:cron:1", estimatedPromptTokens: 50 },
+  ];
+  const shown = selectUsageSessions(sessions);
+  assert.equal(countIdleSessions(sessions, shown), 2);
+  assert.deepEqual(listIdleSessions(sessions, shown).map((session) => session.key), [
+    "agent:b:main",
+    "agent:c:feishu:group:g",
+  ]);
+  assert.equal(countIdleSessions(null, []), 0);
+  assert.deepEqual(listIdleSessions(null, []), []);
 });
 
 test("usage sessions tolerate null/undefined input", () => {
   assert.deepEqual(selectUsageSessions(null), []);
   assert.deepEqual(selectUsageSessions(undefined), []);
-});
-
-test("stale main sessions stay hidden until DM'd, group sessions always show", () => {
-  const now = 1_800_000_000_000;
-  const sessions = [
-    // 天璇主会话：20 天没动、无估算 —— 私聊前不上屏
-    { key: "agent:tianxuan:main", isGroup: false, updatedAt: now - 20 * 24 * 3600_000 },
-    // 天璇群会话：再旧也是接力跳名单，常驻
-    { key: "agent:tianxuan:feishu:group:oc_b15", isGroup: true, updatedAt: now - 20 * 24 * 3600_000 },
-    // 天枢主会话：刚私聊过 → 上屏
-    { key: "agent:tianshu:main", isGroup: false, updatedAt: now - 60_000 },
-    // 主会话陈旧但带上下文估算 → 上屏（有信息量）
-    { key: "agent:main:main", isGroup: false, estimatedPromptTokens: 55_000, updatedAt: now - 3 * 24 * 3600_000 },
-  ];
-  const picked = selectUsageSessions(sessions, { nowMs: now });
-  assert.deepEqual(picked.map((session) => session.key), [
-    "agent:tianshu:main",
-    "agent:main:main",
-    "agent:tianxuan:feishu:group:oc_b15",
-  ]);
 });
 
 test("hopToneOf: 四档状态映射，current 只认正在跑的任务本身（状态驱动不点名）", () => {
@@ -148,9 +170,42 @@ test("hopToneOf: 四档状态映射，current 只认正在跑的任务本身（�
   assert.equal(hopToneOf({ status: "running", taskId: "a" }, "b").current, false);
 });
 
-test("hopGlyphOf: 字形与 tone 一一对应", () => {
+test("failureClassOf: 真机话术分诊，词表外一律真失败（宁可错杀不漏报）", () => {
+  // 真机 18791 采集的三类良性话术
+  assert.equal(failureClassOf("heartbeat skipped: quiet-hours"), "skip");
+  assert.equal(failureClassOf("agent run aborted for restart | OPENCLAW_RESTART_ABORT"), "abort");
+  assert.equal(failureClassOf("Cancelled by operator"), "cancel");
+  // 真失败与话术外新错误
+  assert.equal(failureClassOf("Command failed (exit code 124)"), "real");
+  assert.equal(failureClassOf("provider 502，未产出即回"), "real");
+  assert.equal(failureClassOf("some new failure mode"), "real");
+  assert.equal(failureClassOf(null), "real");
+  assert.equal(failureClassOf(undefined), "real");
+  assert.equal(failureClassOf(""), "real");
+});
+
+test("hopToneOf: 良性未跑走 skipped 档（灰显不染红），cancelled 也算", () => {
+  const skip = hopToneOf({ status: "failed", taskId: "a", error: "heartbeat skipped: quiet-hours" }, "a");
+  assert.equal(skip.tone, "skipped");
+  assert.equal(skip.failed, false);
+  assert.equal(skip.benign, true);
+  const abort = hopToneOf({ status: "failed", taskId: "a", error: "OPENCLAW_RESTART_ABORT" }, "a");
+  assert.equal(abort.tone, "skipped");
+  const cancel = hopToneOf({ status: "cancelled", taskId: "a" }, "a");
+  assert.equal(cancel.tone, "skipped");
+  assert.equal(benignStateOf("heartbeat skipped: quiet-hours", "failed"), "静默跳过");
+  assert.equal(benignStateOf("OPENCLAW_RESTART_ABORT", "failed"), "重启中止");
+  assert.equal(benignStateOf(null, "cancelled"), "已取消");
+  // 真失败不受影响
+  const real = hopToneOf({ status: "failed", taskId: "a", error: "exit code 124" }, "a");
+  assert.equal(real.tone, "failed");
+  assert.equal(real.benign, false);
+});
+
+test("hopGlyphOf: 字形与 tone 一一对应（含 skipped ◌）", () => {
   assert.equal(hopGlyphOf("done"), "✓");
   assert.equal(hopGlyphOf("failed"), "✕");
+  assert.equal(hopGlyphOf("skipped"), "◌");
   assert.equal(hopGlyphOf("pending"), "○");
   assert.equal(hopGlyphOf("current"), "●");
 });
@@ -256,4 +311,222 @@ test("toolProgressLabel/sessionErrorText: 关闭中文映射 = 回原文", () =>
     sessionErrorText("leo/gpt-6 request failed (provider internal error, HTTP 502).", false),
     "leo/gpt-6 request failed (provider internal error, HTTP 502).",
   );
+});
+
+test("groupSessionEpisodes: 台账全量按 gap 链分段，段按最近活动新→旧", () => {
+  const min = 60_000;
+  const now = 10_000_000_000;
+  const at = (minAgo) => now - minAgo * min;
+  const run = (id, sessionKey, startedMin, endedMin, status = "done") => ({
+    id,
+    sessionKey,
+    status,
+    startedAtMs: at(startedMin),
+    endedAtMs: endedMin == null ? null : at(endedMin),
+  });
+  const runs = [
+    // 同一群聊：3h 前一小轮（2 run）+ 刚才的一轮（3 run），中间沉默 2h 切段
+    run(1, "agent:tianshu:feishu:group:oc_demo", 180, 176),
+    run(2, "agent:tianxuan:feishu:group:oc_demo", 175, 171),
+    run(3, "agent:tianshu:feishu:group:oc_demo", 40, 36),
+    run(4, "agent:tianxuan:feishu:group:oc_demo", 35, 30),
+    run(5, "agent:tianji:feishu:group:oc_demo", 30, 29, "failed"),
+    // 另一个群聊的独立轮次（最近活动更新，应排最前）
+    run(6, "agent:yuheng:feishu:group:oc_other", 25, 20),
+  ];
+  const episodes = groupSessionEpisodes(runs);
+  assert.equal(episodes.length, 3);
+  // 最近活动排序：oc_other 的轮次（20min）最靠前
+  assert.equal(episodes[0].runs[0].id, 6);
+  // 段内旧→新：刚收尾的一段是 3→4→5
+  assert.deepEqual(episodes[1].runs.map((r) => r.id), [3, 4, 5]);
+  assert.deepEqual(episodes[2].runs.map((r) => r.id), [1, 2]);
+  // 段时间戳：开始 = 首跳开始，最近活动 = 末跳结束
+  assert.equal(episodes[1].startedAtMs, at(40));
+  assert.equal(episodes[1].lastActivityMs, at(29));
+});
+
+test("groupSessionEpisodes: 沉默上限跟随设置放宽/收紧", () => {
+  const min = 60_000;
+  const runs = [
+    { id: 1, sessionKey: "agent:a:feishu:group:g", status: "done", startedAtMs: 120 * min, endedAtMs: 118 * min },
+    { id: 2, sessionKey: "agent:b:feishu:group:g", status: "done", startedAtMs: 80 * min, endedAtMs: 75 * min },
+  ];
+  // 1h 上限：40 分钟沉默串成一段
+  assert.equal(groupSessionEpisodes(runs).length, 1);
+  // 20 分钟上限：切段
+  assert.equal(groupSessionEpisodes(runs, 20 * min).length, 2);
+  assert.equal(groupSessionEpisodes([]).length, 0);
+  assert.equal(groupSessionEpisodes(null).length, 0);
+});
+
+test("isSubagentTask/cleanTaskTitle: 子 agent 任务识别与标题清理（真机 18791 形态）", () => {
+  // 真机样例：tasks.list 里 kind=cli 的行，sessionKey/childSessionKey 落在
+  // agent:天枢:subagent:<uuid>，标题 = spawn 上下文原文
+  const sub = {
+    kind: "cli",
+    sessionKey: "agent:tianshu:subagent:59af0ac6-c53f-4baa-89ec-6095706bff34",
+    childSessionKey: "agent:tianshu:subagent:59af0ac6-c53f-4baa-89ec-6095706bff34",
+    title: "[Subagent Context] You are operating as a subagent of tianshu.",
+  };
+  assert.equal(isSubagentTask(sub), true);
+  assert.equal(isSubagentTask({ sessionKey: "agent:tianshu:main" }), false);
+  assert.equal(isSubagentTask({ sessionKey: "agent:tianshu:feishu:group:oc_x" }), false);
+  assert.equal(isSubagentTask(null), false);
+  assert.equal(
+    cleanTaskTitle(sub),
+    "You are operating as a subagent of tianshu.",
+  );
+  assert.equal(cleanTaskTitle({ title: "北斗巡检-OpenAI安全黑洞任务" }), "北斗巡检-OpenAI安全黑洞任务");
+  assert.equal(cleanTaskTitle({ title: "" }), "");
+  assert.equal(cleanTaskTitle(null), "");
+});
+
+test("sessionRunHop: 透传收工结论 terminalSummary（成果速览六案①）", () => {
+  const hop = sessionRunHop({
+    id: 9,
+    status: "done",
+    agentId: "tianshu",
+    title: "巡检",
+    terminalSummary: "巡检完成：发现 1 处卡点，已补发续跑卡。",
+  });
+  assert.equal(hop.terminalSummary, "巡检完成：发现 1 处卡点，已补发续跑卡。");
+  assert.equal(sessionRunHop({ id: 1, status: "done" }).terminalSummary, null);
+  assert.equal(sessionRunHop({}).terminalSummary, null);
+});
+
+test("cronScheduleText: 北斗常用族人话，其余透传", () => {
+  assert.equal(cronScheduleText("0 14 * * *"), "每天 14:00");
+  assert.equal(cronScheduleText("0 3 * * *"), "每天 03:00");
+  assert.equal(cronScheduleText("*/30 * * * *"), "每 30 分钟");
+  assert.equal(cronScheduleText("0 */6 * * *"), "每 6 小时");
+  assert.equal(cronScheduleText("0 9 * * 1-5"), "工作日 09:00");
+  assert.equal(cronScheduleText("15 8 1 * *"), "15 8 1 * *");
+  assert.equal(cronScheduleText(""), "");
+  assert.equal(cronScheduleText(null), "");
+});
+
+test("cronNextRunMs: 每天/工作日与每 N 分钟两族，其余 null", () => {
+  const now = new Date("2026-10-04T15:00:00").getTime(); // 周六
+  // 每天 14:00 已过 → 明天 14:00
+  const nextDaily = cronNextRunMs("0 14 * * *", now);
+  assert.equal(new Date(nextDaily).getDate(), 5);
+  assert.equal(new Date(nextDaily).getHours(), 14);
+  // 每 30 分钟 → 对齐到下个半点/整点
+  const nextStep = cronNextRunMs("*/30 * * * *", now);
+  assert.equal((nextStep - now) > 0 && (nextStep - now) <= 30 * 60_000, true);
+  assert.equal(nextStep % (30 * 60_000), 0);
+  // 工作日 09:00，周六 15:00 → 周一 09:00
+  const nextWorkday = cronNextRunMs("0 9 * * 1-5", now);
+  assert.equal(new Date(nextWorkday).getDay(), 1);
+  assert.equal(new Date(nextWorkday).getHours(), 9);
+  // 月度等不猜
+  assert.equal(cronNextRunMs("15 8 1 * *", now), null);
+  assert.equal(cronNextRunMs(null, now), null);
+});
+
+test("activeRelayEpisodes: 同群聊只留最新 run，展开完整轮次", () => {
+  const now = 10_000_000_000;
+  const min = 60_000;
+  const runs = [
+    { id: 1, sessionKey: "agent:tianshu:feishu:group:oc_r", agentId: "tianshu", status: "done", startedAtMs: now - 26 * min, endedAtMs: now - 24 * min },
+    { id: 2, sessionKey: "agent:tianxuan:feishu:group:oc_r", agentId: "tianxuan", status: "done", startedAtMs: now - 24 * min, endedAtMs: now - 18 * min },
+    { id: 3, sessionKey: "agent:tianji:feishu:group:oc_r", agentId: "tianji", status: "running", startedAtMs: now - 3 * min },
+    // 另一群聊的活跃 run：独立成条
+    { id: 4, sessionKey: "agent:yuheng:feishu:group:oc_other", agentId: "yuheng", status: "running", startedAtMs: now - 2 * min },
+    // 已结束的 run 不是"活跃"
+    { id: 5, sessionKey: "agent:kaiyang:feishu:group:oc_done", agentId: "kaiyang", status: "done", startedAtMs: now - min, endedAtMs: now - 30_000 },
+  ];
+  const activeRuns = runs.filter((run) => run.status === "running");
+  const episodes = activeRelayEpisodes(runs, activeRuns);
+  // oc_r 展开为 3 跳（1→2→3）；oc_other 单 run 不成链，不进全景
+  assert.equal(episodes.length, 1);
+  const relay = episodes[0];
+  assert.equal(relay.chatId, "group:oc_r");
+  assert.equal(relay.hops.length, 3);
+  assert.equal(relay.hops[0].agentId, "tianshu");
+  assert.equal(relay.hops[2].agentId, "tianji");
+});
+
+test("isQuietNow: 跨午夜免打扰与开关", () => {
+  const at = (h, m) => new Date(2026, 9, 4, h, m);
+  assert.equal(isQuietNow(true, "23:00", "08:00", at(23, 30)), true);
+  assert.equal(isQuietNow(true, "23:00", "08:00", at(2, 0)), true);
+  assert.equal(isQuietNow(true, "23:00", "08:00", at(12, 0)), false);
+  assert.equal(isQuietNow(true, "23:00", "08:00", at(23, 0)), true);
+  assert.equal(isQuietNow(true, "23:00", "08:00", at(8, 0)), false); // 端点右开
+  assert.equal(isQuietNow(false, "23:00", "08:00", at(23, 30)), false); // 开关关=不静默
+  assert.equal(isQuietNow(true, "12:00", "14:00", at(13, 0)), true); // 非跨午夜
+  assert.equal(isQuietNow(true, "abc", "08:00", at(23, 30)), false); // 非法时间
+});
+
+test("detectRoundNotifications: 真失败响、良性哑、开机不回放历史", () => {
+  const now = 10_000_000_000;
+  const min = 60_000;
+  const run = (over) => ({ agentId: "tianji", sessionKey: "agent:tianji:feishu:group:oc_r", ...over });
+  const runs = [
+    run({ id: 1, status: "done", title: "拆解", startedAtMs: now - 10 * min, endedAtMs: now - 9 * min }),
+    // 真失败，新鲜 → 响
+    run({ id: 2, status: "failed", title: "创作", error: "provider 502，未产出即回", startedAtMs: now - 6 * min, endedAtMs: now - 2 * min }),
+    // 良性跳过 → 永远哑
+    run({ id: 3, sessionKey: "agent:yuheng:cron:c1", agentId: "yuheng", status: "failed", title: "heartbeat", error: "heartbeat skipped: quiet-hours", startedAtMs: now - 3 * min, endedAtMs: now - 3 * min }),
+    // 旧失败（超出新鲜窗）→ 不回放
+    run({ id: 4, status: "failed", title: "旧账", error: "provider 502", startedAtMs: now - 60 * min, endedAtMs: now - 55 * min }),
+  ];
+  const config = { episodeGapMin: 60, freshnessMs: 15 * min, quietOn: false };
+  const { toasts, next } = detectRoundNotifications(runs, {}, config, now);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].kind, "fail");
+  assert.ok(toasts[0].body.includes("创作"));
+  // 第二拍：同一批 runs 再来 → 不重复响（failedSeen 已记）
+  const second = detectRoundNotifications(runs, next, config, now + 3000);
+  assert.equal(second.toasts.length, 0);
+});
+
+test("detectRoundNotifications: 跨轮失败合并成一张聚合卡", () => {
+  const now = 10_000_000_000;
+  const min = 60_000;
+  const runs = [
+    { id: 1, agentId: "tianxuan", sessionKey: "agent:tianxuan:feishu:group:oc_a", status: "failed", title: "研究", error: "provider 502", startedAtMs: now - 4 * min, endedAtMs: now - 2 * min },
+    { id: 2, agentId: "tianji", sessionKey: "agent:tianji:feishu:group:oc_b", status: "failed", title: "创作", error: "LLM request timed out.", startedAtMs: now - 3 * min, endedAtMs: now - min },
+  ];
+  const { toasts } = detectRoundNotifications(runs, {}, { episodeGapMin: 60, freshnessMs: 15 * min }, now);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].kind, "merge");
+  assert.ok(toasts[0].body.includes("2 个轮次"));
+});
+
+test("detectRoundNotifications: 完成提醒只响一次，补发中的轮不提前响", () => {
+  const now = 10_000_000_000;
+  const min = 60_000;
+  const key = "agent:tianji:feishu:group:oc_r";
+  const done = { id: 2, agentId: "tianji", sessionKey: key, status: "done", title: "创作收工", startedAtMs: now - 5 * min, endedAtMs: now - 30_000 };
+  // 上一拍：这轮还在跑（天枢 done + 天玑 running）
+  const prevRuns = [
+    { id: 1, agentId: "tianshu", sessionKey: key, status: "done", title: "拆解", startedAtMs: now - 10 * min, endedAtMs: now - 6 * min },
+    { id: 2, agentId: "tianji", sessionKey: key, status: "running", title: "创作", startedAtMs: now - 5 * min },
+  ];
+  const config = { episodeGapMin: 60, freshnessMs: 15 * min };
+  const first = detectRoundNotifications(prevRuns, {}, config, now - min);
+  assert.equal(first.toasts.length, 0); // 还在跑，不响
+  // 本拍：天玑收行 done → 完成提醒一次
+  const second = detectRoundNotifications([...prevRuns.slice(0, 1), done], first.next, config, now);
+  assert.equal(second.toasts.length, 1);
+  assert.equal(second.toasts[0].kind, "ok");
+  // 第三拍：同快照再来 → 不重复
+  const third = detectRoundNotifications([done], second.next, config, now + min);
+  assert.equal(third.toasts.length, 0);
+});
+
+test("detectRoundNotifications: 免打扰时段整批丢弃", () => {
+  const now = new Date(2026, 9, 4, 23, 30).getTime();
+  const min = 60_000;
+  const runs = [
+    { id: 1, agentId: "tianji", sessionKey: "agent:tianji:feishu:group:oc_r", status: "failed", title: "创作", error: "provider 502", startedAtMs: now - 2 * min, endedAtMs: now - min },
+  ];
+  const { toasts, next } = detectRoundNotifications(runs, {}, { episodeGapMin: 60, quietOn: true, quietStart: "23:00", quietEnd: "08:00" }, now);
+  assert.equal(toasts.length, 0);
+  // 免打扰里丢掉的失败，failedSeen 已记 → 时段过后也不回放（静默=不发）
+  const later = detectRoundNotifications(runs, next, { episodeGapMin: 60 }, now + 3_600_000);
+  assert.equal(later.toasts.length, 0);
 });

@@ -52,12 +52,20 @@ import qwenAppIcon from "./assets/qwen-app-icon.png";
 import workbuddyAppIcon from "./assets/workbuddy-app-icon.png";
 import zcodeAppIcon from "./assets/zcode-app-icon.png";
 import { glassShellAppearance, nextGlassTint, resolveGlassMode } from "./glassAppearance.js";
-import { isTauriRuntime, loadAgentsSnapshot, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, loadSessionRuns, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
-import { agentDisplayName, buildAgentNameMap, buildTaskChains, chainHopsFor, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions, sessionErrorText, sessionEpisodeHops, sessionRunHop, toolProgressLabel } from "./taskChains.js";
+import { isTauriRuntime, loadAgentsSnapshot, loadCronJobs, loadGatewayConfig, loadGatewayTasks, loadMonitorConfig, loadSessionRuns, refreshCronJobs, refreshGatewayTasks, saveGatewayConfig, saveMonitorConfig } from "./taskClient.js";
+import { activeRelayEpisodes, agentDisplayName, detectRoundNotifications, benignStateOf, buildAgentNameMap, buildTaskChains, chainHopsFor, cleanTaskTitle, cronNextRunMs, cronScheduleText, failureClassOf, groupSessionEpisodes, isSubagentTask, listIdleSessions, hopGlyphOf, hopToneOf, isActiveTask, selectUsageSessions, sessionErrorText, sessionEpisodeHops, sessionRunHop, toolProgressLabel } from "./taskChains.js";
 import { modelDisplayName } from "./modelNames.js";
 import { QUOTA_LOW_REMAINING, bindingWindow, isBalanceWindow } from "./quotaWindows.js";
 import { CodexCreditsCard, QuotaAlertsCard } from "./QuotaSettings.jsx";
 import { desyncHealRetryDelayMs, horizontalStripTargetWidth } from "./windowGeometry";
+
+// 预览豁免（?eager）：IAB 预览面板收起时 document.visibilityState 恒为 hidden
+// 且被宿主钉死不可覆写（实例与 window.document 都 non-configurable），
+// 演示数据全靠同步拍填充——带 eager 参数的预览页无视隐藏照常同步。
+// 真机窗口不带此参数，行为不变。
+const PREVIEW_EAGER =
+  typeof window !== "undefined"
+  && new URLSearchParams(window.location.search).has("eager");
 import {
   configureQoderCookie,
   configureSync,
@@ -125,13 +133,21 @@ import {
   updateTrayQuotaBadge,
   setWindowGlass,
   setTasksWidgetWindow,
+  setNotificationWindow,
+  onNotificationVisibility,
+  expandRoundDetails,
+  onPanelExpand,
+  onNavTasks,
+  onAgentNames,
   expandTasksHover,
   expandTasksHoverHorizontal,
   collapseTasksHover,
   showMainExpanded,
   emitGlassTint,
   onGlassTintChanged,
-  resizeCurrentWindow,
+  applyExpandedPanelSize,
+  applyMiniCapsuleSize,
+  saveTasksPanelSize,
   setPinnedHoverTargetOpacity,
   setWindowPinned,
   setWindowUiScale,
@@ -328,6 +344,8 @@ const STRIP_VCELL_HEIGHT = 46;
 // 估算值（布局 helper 只用它做贴边居中钳制，实际高度由内容决定）。
 const TASKS_HOPCARD_WIDTH = 224;
 const TASKS_HOPCARD_HEIGHT = 168;
+// 6px = 卡与"条的可视表面"的日照间隙（锚面不锚格，壳内边距不再吃掉间距）。
+// 横竖同一值——Leo 2026-10-04 二轮反馈：锚面修正后 12px 偏大、6px 正好。
 const TASKS_HOPCARD_GAP = 6;
 const TASKS_HOVER_LEAVE_DELAY = 260;
 // 横条宽度的收缩迟滞。一格 54px，所以 6px 远低于「真的少了一个 Agent」，
@@ -1860,7 +1878,7 @@ function useWidgetTasksFeed(gateways, enabled) {
     if (!enabled) return undefined;
     let alive = true;
     const tick = async () => {
-      if (document.visibilityState === "hidden") return;
+      if (!PREVIEW_EAGER && document.visibilityState === "hidden") return;
       const current = loadGatewayConfig();
       if (!current.length) return;
       try {
@@ -1929,6 +1947,7 @@ function TasksWidgetWindow({
   onCycleAppearance,
   onOpenExpanded,
   onClose,
+  onPinnedChange,
 }) {
   const [pinned, setPinned] = useState(false);
   // 折叠态记进 localStorage（metrik:tasksWidgetCollapsed）：横竖形态有记忆、
@@ -1938,6 +1957,34 @@ function TasksWidgetWindow({
   );
   useEffect(() => {
     localStorage.setItem("metrik:tasksWidgetCollapsed", collapsed ? "1" : "0");
+  }, [collapsed]);
+  // 提醒卡点击的 A 案落点：Rust 仲裁广播 → 就地展开面板（窗已由 Rust show）。
+  useEffect(() => {
+    let unlistenPromise;
+    onPanelExpand(() => {
+      setCollapsed(false);
+      setMiniControlsOpen(false);
+    });
+    return () => {
+      unlistenPromise?.then((unlisten) => unlisten());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 展开面板尺寸记忆：用户拖拽调过的宽高存回来（metrik:tasksPanelSize），
+  // 折叠态不记（胶囊尺寸是固定形态，不归用户管）。
+  useEffect(() => {
+    if (collapsed) return undefined;
+    let timer = null;
+    const persist = () => saveTasksPanelSize(window.innerWidth, window.innerHeight);
+    const onResize = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(persist, 350);
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.clearTimeout(timer);
+    };
   }, [collapsed]);
   const [refreshing, setRefreshing] = useState(false);
   const [miniControlsOpen, setMiniControlsOpen] = useState(false);
@@ -1965,6 +2012,9 @@ function TasksWidgetWindow({
       return next;
     });
   };
+  // 空闲会话明细开关（星位上下文卡头"另有 N 个空闲会话"点开/收起）：
+  // 默认收起，卡面只留水位行；要盘库时点一下看全量。
+  const [showIdleSessions, setShowIdleSessions] = useState(false);
   const miniShellRef = useRef(null);
   const miniLeaveTimerRef = useRef(null);
   // 延时关闭回调里读的是注册时刻的闭包，方向要经 ref 取最新值。
@@ -2028,14 +2078,18 @@ function TasksWidgetWindow({
         layout: null,
       });
     } else {
+      // 锚条面、不锚跳格：跳格深居 36px 壳内 ~12px，按格算的日照间隙到条的
+      // 可视表面就剩 ~0——真机看就是"卡贴着条"（Leo 2026-10-04 截图）。改为
+      // 从壳缘起算，堆叠间距才名副其实；centerX 仍取跳格（预览横向钳位用）。
+      const shell = miniShellRef.current?.getBoundingClientRect();
       setHoverCard({
         hop,
         index,
         total,
         orientation: "horizontal",
         cellRect: {
-          top: cell.top,
-          bottom: cell.bottom,
+          top: shell ? shell.top : cell.top,
+          bottom: shell ? shell.bottom : cell.bottom,
           centerX: cell.left + cell.width / 2,
         },
         layout: null,
@@ -2120,8 +2174,9 @@ function TasksWidgetWindow({
   // 链路索引 + agent 显示名（北斗星名）。轮询每拍重建，任务量 ≤300 很便宜。
   const chainIndex = useMemo(() => buildTaskChains(tasks), [feed.tasks]);
   const agentNameMap = useMemo(() => buildAgentNameMap(feed.agents?.agents), [feed.agents]);
-  // 失败/完成的口径 = 近 24 小时内结束的任务（账本保留 7 天，不设窗口的话
-  // 数字只涨不清，就成了历史累计而不是"当前这批工作"的状态）。
+  // 失败/完成的口径 = failedWindowH 小时内结束的任务（设置"失败记录保留"，
+  // 默认 1 小时；不设窗口的话数字只涨不清，就成了历史累计而不是"当前这批
+  // 工作"的状态——失败的工作尤其不该占着面板一整天）。
   const recentWindowMs = loadMonitorConfig().failedWindowH * 3_600_000;
   const taskEndedAt = (task) =>
     Number.isFinite(task.endedAtMs) ? task.endedAtMs : Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
@@ -2133,8 +2188,13 @@ function TasksWidgetWindow({
     () => selectUsageSessions(feed.agents?.sessions),
     [feed.agents],
   );
-  // 会话工作台账（session_run 表）：群聊派活等会话 run。活跃 + 近 24h 失败，
-  // 与任务行同一口径；排序键 = 最近活动。
+  // 空闲会话清单：没上卡的（无水位且未运行），供卡头计数与"看全部"展开。
+  const idleSessions = useMemo(
+    () => listIdleSessions(feed.agents?.sessions, usageSessions),
+    [feed.agents, usageSessions],
+  );
+  // 会话工作台账（session_run 表）：群聊派活等会话 run。活跃 + 近 N 小时失败
+  // （失败记录保留设置），与任务行同一口径；排序键 = 最近活动。
   const sessionRuns = feed.sessionRuns ?? [];
   const activeRuns = sessionRuns.filter((run) => run.status === "running");
   const failedRuns = sessionRuns.filter(
@@ -2172,15 +2232,24 @@ function TasksWidgetWindow({
   // 折叠时要一眼看到的是"哪些活儿在跑、跑了多久、谁挂了"——42px 窄条装不下
   // 任何可读信息（字牌/计数都被用户否了），任务标题才是自解释的。
   // 两类工作同一行集：登记任务（task）+ 会话工作（session，群聊派活，见会话台账）；
-  // 活跃在前，近 24h 失败跟后，按最近活动排序取前 5 行。
+  // 行序三档制（Leo 2026-10-04 "失败堆积刷屏"的解法之一 + 六案②失败分诊）：
+  // 运行中的永远在前，真失败排其后，良性未跑（静默跳过/重启中止/手动取消，
+  // 分诊见 failureClassOf）灰显垫底——失败再多也不把活的工作挤出前 5 行。
+  const failedRunTone = (run) => (failureClassOf(run.error) === "real" ? "failed" : "skipped");
+  const failedTaskTone = (task) => (failureClassOf(task.error) === "real" ? "failed" : "skipped");
   const miniRowsAll = [
     ...active.map((task) => ({ kind: "task", task, tone: "running", at: taskStartedAt(task) })),
     ...activeRuns.map((run) => ({ kind: "session", run, tone: "running", at: run.startedAtMs ?? 0 })),
     ...recentlyEnded
       .filter((task) => task.status === "failed" || task.status === "timed_out" || task.status === "lost")
-      .map((task) => ({ kind: "task", task, tone: "failed", at: taskEndedAt(task) })),
-    ...failedRuns.map((run) => ({ kind: "session", run, tone: "failed", at: sessionActivityAt(run) })),
-  ].sort((a, b) => b.at - a.at);
+      .map((task) => ({ kind: "task", task, tone: failedTaskTone(task), at: taskEndedAt(task) })),
+    ...failedRuns.map((run) => ({ kind: "session", run, tone: failedRunTone(run), at: sessionActivityAt(run) })),
+  ].sort(
+    (a, b) =>
+      (a.tone === "failed" ? 1 : a.tone === "skipped" ? 2 : 0) -
+        (b.tone === "failed" ? 1 : b.tone === "skipped" ? 2 : 0) ||
+      b.at - a.at,
+  );
   const miniRows = miniRowsAll.slice(0, 5);
   // 行的唯一键（shownKeys / otherRows / +N 计数共用）。
   const miniRowKey = (row) =>
@@ -2212,7 +2281,7 @@ function TasksWidgetWindow({
         row.kind === "session"
           ? row.run.title || row.run.fallbackTitle || "会话工作"
           : row.task.title || row.task.taskId;
-      return `${name}·${text}${row.tone === "failed" ? "（失败）" : ""}`;
+      return `${name}·${text}${row.tone === "failed" ? "（失败）" : row.tone === "skipped" ? "（跳过）" : ""}`;
     })
     .join("；");
   // 竖条胶卷的跳集：登记任务 = 任务链；会话工作 = 同轮派活的真实 run 序列。
@@ -2237,12 +2306,20 @@ function TasksWidgetWindow({
       ? { width: 42, height: controlsOpenState ? 376 : 224 }
       : { width: controlsOpenState ? 308 : 224, height: 36 };
   // 尺寸变化统一走这一个副作用（折叠/开合/切向/行数），处理器只改状态。
+  // 折叠态锁死原生拖拽并解除展开态的尺寸下限（细条边缘全是热区）。
   useLayoutEffect(() => {
     if (!collapsed) return;
     const dims = miniSize(miniOrientation === "vertical", miniControlsOpen);
-    runWindowAction(() => resizeCurrentWindow(dims.width, dims.height));
+    runWindowAction(() => applyMiniCapsuleSize(dims.width, dims.height));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collapsed, miniControlsOpen, miniOrientation]);
+  // 展开态挂载（重启后直接回到面板）：Rust 侧按 320×384 建窗，这里把用户
+  // 上次拖出的尺寸套回去并放开可拖拽调尺寸。折叠态挂载由上面的胶囊副作用管。
+  useEffect(() => {
+    if (collapsed) return;
+    runWindowAction(() => applyExpandedPanelSize());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // 详情卡定位（唯一路径，Portal+fixed）。竖条：卡在胶卷靠屏幕中心一侧，
   // 纵向锚在悬停跳中心、钳在视口内，卡高用实测值钳半高。横条：真机由
   // horizontal helper 给出条上方/下方坐标，预览贴悬停格上缘（放不下改下方）、
@@ -2286,7 +2363,7 @@ function TasksWidgetWindow({
     const expand = () => {
       setCollapsed(false);
       setMiniControlsOpen(false);
-      runWindowAction(() => resizeCurrentWindow(320, 384));
+      runWindowAction(() => applyExpandedPanelSize());
     };
     const renderMiniRow = ({ kind = "task", task, run, tone, withChain = false, onHopHover }) => {
       // 会话工作行：接力段 ≥2 run 时与登记任务链同款胶卷（沿用"有链时链优先"
@@ -2296,6 +2373,7 @@ function TasksWidgetWindow({
         const agentName = agentDisplayName(agentNameMap, run.agentId);
         const title = run.title || run.fallbackTitle || "会话工作";
         const failed = tone === "failed";
+        const skipped = tone === "skipped";
         const taskId = `session-run:${run.id ?? run.runId ?? run.sessionKey}`;
         const hops = feed.sessionRuns?.length ? sessionEpisodeHops(feed.sessionRuns, run) : [];
         const hasEpisode = hops.length >= 2;
@@ -2303,13 +2381,13 @@ function TasksWidgetWindow({
           <button
             key={taskId}
             type="button"
-            className={`tasks-mini-row${failed ? " tasks-mini-row--failed" : ""}`}
+            className={`tasks-mini-row${failed ? " tasks-mini-row--failed" : ""}${skipped ? " tasks-mini-row--skipped" : ""}`}
             onClick={expand}
             onPointerEnter={onHopHover && !hasEpisode ? (event) => onHopHover(sessionRunHop(run), 0, 1, event) : undefined}
             title={
               onHopHover && !hasEpisode
                 ? undefined
-                : `${agentName ? `${agentName} · ` : ""}${title}${failed && run.error ? `（${sessionErrorText(run.error, translateProgress)}）` : ""} · 点击展开`
+                : `${agentName ? `${agentName} · ` : ""}${title}${failed && run.error ? `（${sessionErrorText(run.error, translateProgress)}）` : ""}${skipped ? `（${benignStateOf(run.error, "failed")}）` : ""} · 点击展开`
             }
           >
             {hasEpisode ? (
@@ -2322,7 +2400,7 @@ function TasksWidgetWindow({
             ) : (
               <>
                 <i
-                  className={`tasks-mini-dot ${failed ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
+                  className={`tasks-mini-dot ${failed ? "tasks-mini-dot--failed" : skipped ? "tasks-mini-dot--skipped" : feed.live ? "tasks-mini-dot--on" : ""}`}
                   aria-hidden="true"
                 />
                 {agentName && <span className="tasks-mini-agent">{agentName}</span>}
@@ -2332,7 +2410,7 @@ function TasksWidgetWindow({
           </button>
         );
       }
-      const title = task.title || task.taskId;
+      const title = cleanTaskTitle(task) || task.taskId;
       const lastSeen = Number.isFinite(task.lastSeenMs) ? task.lastSeenMs : 0;
       // 星名归属：跑马灯一行 = 谁在干 + 干什么；有链时链优先（用户拍板：关联的是链路）
       const agentName = agentDisplayName(agentNameMap, task.agentId);
@@ -2349,20 +2427,20 @@ function TasksWidgetWindow({
         <button
           key={`${task.gateway}:${task.taskId}`}
           type="button"
-          className={`tasks-mini-row${tone === "failed" ? " tasks-mini-row--failed" : ""}`}
+          className={`tasks-mini-row${tone === "failed" ? " tasks-mini-row--failed" : ""}${tone === "skipped" ? " tasks-mini-row--skipped" : ""}`}
           onClick={expand}
           title={
             // 悬停详情卡接管提示时撤掉行级原生 title（链上每跳的已在胶卷里撤过），
             // 避免两层气泡叠出
             withChain && onHopHover
               ? undefined
-              : `${hasChain ? `${chainText} | ` : ""}${agentName ? `${agentName} · ` : ""}${title}${tone === "failed" ? "（失败）" : ""} · 点击展开`
+              : `${hasChain ? `${chainText} | ` : ""}${agentName ? `${agentName} · ` : ""}${title}${tone === "failed" ? "（失败）" : tone === "skipped" ? "（跳过）" : ""} · 点击展开`
           }
         >
           {/* 链内当前跳自带脉冲，行首状态点是重复噪音（尤其胶卷滑走后）——只有无链行保留 */}
           {!hasChain && (
             <i
-              className={`tasks-mini-dot ${tone === "failed" ? "tasks-mini-dot--failed" : feed.live ? "tasks-mini-dot--on" : ""}`}
+              className={`tasks-mini-dot ${tone === "failed" ? "tasks-mini-dot--failed" : tone === "skipped" ? "tasks-mini-dot--skipped" : feed.live ? "tasks-mini-dot--on" : ""}`}
               aria-hidden="true"
             />
           )}
@@ -2616,37 +2694,58 @@ function TasksWidgetWindow({
           <TaskStatusPill status={task.status} />
           {stale && <span className="task-pill task-pill--stale">卡?</span>}
           <span className="widget-task-title" title={task.title || task.taskId}>
-            {task.title || task.taskId}
+            {cleanTaskTitle(task) || task.taskId}
           </span>
+          {isSubagentTask(task) ? <span className="widget-session-flag">子</span> : null}
         </span>
         <small>{formatTaskDuration(task.startedAtMs, task.endedAtMs) || formatTaskAge(lastSeen)}</small>
       </div>
     );
   };
-  // 运行中任务的进度一行小字（网关 tasks.list 的 progressSummary 原话）。
-  // 只有 running 且网关真给了进度才渲染，别给行硬凑空行。
+  // 运行中任务的进度一行小字：优先 cli 行的 lastToolName（中文化的最后工具，
+  // ⑤实时工具流水小版），回退网关 progressSummary 原话；带累计调用数。
+  // 只有 running 且真有内容才渲染，别给行硬凑空行。
   const renderProgressLine = (task) => {
-    if (task.status !== "running" || !task.progressSummary) return null;
+    if (task.status !== "running") return null;
+    const text = toolProgressLabel(task.lastToolName, translateProgress) || task.progressSummary;
+    if (!text) return null;
+    const count = Number.isFinite(task.toolUseCount) && task.toolUseCount > 0
+      ? ` · 本轮 ${task.toolUseCount} 次工具`
+      : "";
     return (
-      <p className="task-progress-line" title={task.progressSummary}>
+      <p className="task-progress-line" title={task.lastToolName ?? task.progressSummary ?? text}>
         <em>正在：</em>
-        {task.progressSummary}
+        {text}
+        {count}
+      </p>
+    );
+  };
+  // 成果速览（六案①）：收工行附北斗写的中文结论（terminalSummary 原话，
+  // 台账/任务行透传）。只在终态行上出现，悬浮看全文。
+  const renderSummaryLine = (text) => {
+    if (!text) return null;
+    return (
+      <p className="task-summary-line" title={text}>
+        <em>成果：</em>
+        {text}
       </p>
     );
   };
   // 会话工作行（群聊派活，session_run 台账）：标题=派活原话，行尾「会话」小标
-  // 与登记任务区分；附属信息行与登记任务的进度行同结构（失败=错误原话红字）。
+  // 与登记任务区分；附属信息行与登记任务的进度行同结构（失败=错误原话红字；
+  // 良性未跑=灰显跳过档，不染红——失败分诊六案②）。
   const renderSessionRow = (run) => {
     const failed = run.status === "failed";
+    const benign = failed && failureClassOf(run.error) !== "real";
     const lastSeen = run.endedAtMs ?? run.lastSeenMs ?? 0;
     return (
       <div className="widget-task-row">
         <i
-          className={`widget-task-accent ${failed ? "widget-task-accent--failed" : "widget-task-accent--running"}`}
+          className={`widget-task-accent ${failed && !benign ? "widget-task-accent--failed" : benign ? "widget-task-accent--skipped" : "widget-task-accent--running"}`}
           aria-hidden="true"
         />
         <span className="widget-task-main">
-          <TaskStatusPill status={failed ? "failed" : "running"} />
+          <TaskStatusPill status={failed ? (benign ? "skipped" : "failed") : "running"} />
           <span className="widget-task-title" title={run.title || ""}>
             {run.title || run.fallbackTitle || "会话工作"}
           </span>
@@ -2658,7 +2757,18 @@ function TasksWidgetWindow({
   };
   const renderSessionSubLine = (run) => {
     const failed = run.status === "failed";
+    const benign = failed && failureClassOf(run.error) !== "real";
     const agentName = agentDisplayName(agentNameMap, run.agentId) || run.agentId || "";
+    if (benign) {
+      const label = benignStateOf(run.error, "failed");
+      return (
+        <p className="task-progress-line task-progress-line--benign" title={run.error || label}>
+          {agentName ? `${agentName} · ` : ""}
+          {label}
+          {run.error ? `（${run.error}）` : ""}
+        </p>
+      );
+    }
     if (failed) {
       const text = sessionErrorText(run.error, translateProgress) || "run 失败";
       return (
@@ -2685,21 +2795,109 @@ function TasksWidgetWindow({
       if (hop.taskId !== task.taskId) chainMemberIds.add(hop.taskId);
     }
   }
-  // 展开窗面板 = 两类工作合并：活跃登记任务 + 活跃会话工作 + 近 24h 失败的
-  // 会话工作（登记任务的失败仍只在迷你行集里，展开窗口径不变）。按最近活动排序。
+  // 展开窗面板 = 活跃登记任务 + 会话工作按轮次合并：同一轮接力（与迷你条
+  // 同一把 gap 链）不管几个 run 都占一行，同轮失败不再逐 run 刷屏（Leo
+  // 2026-10-04 "很多很多条失败记录"的解法之二）。代表行取轮内最新 run，
+  // 时长按整轮算（首跳开始 → 最新一跳）；行序与迷你条同一条两档制规则。
+  const panelSessionRows = (() => {
+    const rows = [];
+    const claimed = new Set();
+    const runKeyOf = (item) => String(item.id ?? item.runId ?? item.sessionKey);
+    const ordered = [...activeRuns, ...failedRuns].sort(
+      (a, b) => (b.startedAtMs ?? 0) - (a.startedAtMs ?? 0),
+    );
+    for (const run of ordered) {
+      if (claimed.has(runKeyOf(run))) continue;
+      const hops = sessionRuns.length ? sessionEpisodeHops(sessionRuns, run) : [];
+      hops.forEach((hop) => claimed.add(String(hop.taskId).replace("session-run:", "")));
+      // 轮内最新 run = hops 末位（升序）；台账里可能查得到原行（含 fallbackTitle
+      // 等渲染字段），查不到退回当前 run。
+      const latestId = hops.length ? String(hops[hops.length - 1].taskId).replace("session-run:", "") : runKeyOf(run);
+      const latestRun = sessionRuns.find((item) => runKeyOf(item) === latestId) ?? run;
+      const roundStartMs = hops.length ? hops[0].startedAtMs : latestRun.startedAtMs;
+      rows.push({
+        kind: "session",
+        run: latestRun,
+        hops,
+        at: latestRun.endedAtMs ?? latestRun.startedAtMs ?? 0,
+        roundStartMs,
+      });
+    }
+    return rows;
+  })();
+  const panelRowTier = (row) => {
+    if (row.kind !== "session" || row.run.status !== "failed") return 0;
+    // 三档制：运行中 0 → 真失败 1 → 良性未跑 2（分诊口径同 miniRowsAll）。
+    return failureClassOf(row.run.error) === "real" ? 1 : 2;
+  };
   const panelRows = [
     ...active.map((task) => ({ kind: "task", task, at: taskStartedAt(task) })),
-    ...activeRuns.map((run) => ({ kind: "session", run, at: run.startedAtMs ?? 0 })),
-    ...failedRuns.map((run) => ({ kind: "session", run, at: sessionActivityAt(run) })),
-  ].sort((a, b) => b.at - a.at);
+    ...panelSessionRows,
+  ].sort((a, b) => panelRowTier(a) - panelRowTier(b) || b.at - a.at);
   // 星位上下文收敛：全网关跑同一个模型时（北斗常态）模型名进卡头只说一次，
-  // 行内不再重复；模型混跑时才逐行标注。
+  // 行内不再重复；模型混跑时才逐行标注。空闲会话数量进卡头（不逐行占位）。
   const usageModelSet = new Set(
     usageSessions.map((session) => session.model).filter(Boolean),
   );
   const usageModelUniform = usageModelSet.size === 1 ? [...usageModelSet][0] : null;
+  // 星位上下文行：水位行与空闲行同一渲染路径（dimmed 只调透明度），省一份口径。
+  // 水位预警（2026-10-04 六案⑥）：超阈值（设置 watermarkWarnPct，默认 80%，
+  // 0=关）或网关应答 shouldCompact 时琥珀高亮 + "建议清理"角标——快满要吭声。
+  const watermarkWarnPct = loadMonitorConfig().watermarkWarnPct;
+  const renderUsageRow = (session, dimmed) => {
+    const name = agentDisplayName(agentNameMap, session.agentId) || session.agentId || session.key;
+    const running = Boolean(session.hasActiveRun);
+    const model = session.model || null;
+    const estimate = Number.isFinite(session.estimatedPromptTokens) ? session.estimatedPromptTokens : null;
+    const budget = Number.isFinite(session.contextTokenBudget) ? session.contextTokenBudget : null;
+    const fillPct = estimate != null && budget > 0 ? Math.min(100, Math.round((estimate / budget) * 100)) : null;
+    const hot = session.shouldCompact || (fillPct != null && watermarkWarnPct > 0 && fillPct >= watermarkWarnPct);
+    const tone = hot ? "warn" : "";
+    // 刚接活还没产出上下文：数字位显示"启动中"（运行中无水位的会话，Leo 补的场景）
+    const starting = running && estimate == null;
+    const nums = starting
+      ? "启动中"
+      : estimate != null && budget != null
+        ? `${formatCompactTokens(estimate)} / ${formatCompactTokens(budget)}`
+        : budget != null
+          ? `预算 ${formatCompactTokens(budget)}`
+          : "—";
+    const msgs = Number.isFinite(session.promptMessageCount) ? session.promptMessageCount : null;
+    const lastSeen = Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
+    // 会话形态角标：群 = 北斗矩阵群会话（接力跳所在），主 = 该星位主会话。
+    const badge = session.isGroup ? "群" : (session.key ?? "").endsWith(":main") ? "主" : null;
+    return (
+      <div
+        key={session.key}
+        className={`tasks-usage-row${dimmed ? " tasks-usage-row--idle" : ""}`}
+        title={`${session.key}${model ? `
+模型 ${model}` : ""}
+${estimate != null ? `上下文 ${estimate.toLocaleString()} tok` : starting ? "运行中，上下文尚未产出" : "空闲会话，无上下文估算"}${budget != null ? ` · 预算 ${budget.toLocaleString()} tok` : ""}${msgs != null ? ` · ${msgs} 条消息` : ""}${lastSeen ? `
+最近活动 ${formatTaskAge(lastSeen)}` : ""}`}
+      >
+        <i className={`agent-status-dot tasks-usage-dot ${running ? "" : "tasks-usage-dot--idle"}`} aria-hidden="true" />
+        <span className="tasks-usage-name">
+          {name}
+          {badge ? <em>{badge}</em> : null}
+          {!usageModelUniform && model ? (
+            <small className="tasks-usage-model">{model}</small>
+          ) : null}
+        </span>
+        <span className={`task-context-bar ${fillPct == null ? "task-context-bar--empty" : ""}`}>
+          <i className={tone ? `task-context-fill--${tone}` : undefined} style={fillPct != null ? { width: `${fillPct}%` } : undefined} />
+        </span>
+        <span className="tasks-usage-nums">
+          {nums}
+          {hot ? <small className="tasks-usage-hot">建议清理</small> : null}
+          {msgs != null ? <small>{msgs}条</small> : null}
+        </span>
+      </div>
+    );
+  };
   return (
-    <main className={shellAppearance.className}>
+    // tasks-window-shell：面板跟随窗口尺寸（用户可拖拽调宽高）；.widget-shell
+    // 的 320 定宽是主窗小组件的规矩，这里放开到满窗。
+    <main className={`${shellAppearance.className} tasks-window-shell`}>
       <h1 className="sr-only">Metrik Gateway 任务追踪小组件</h1>
       <header className="widget-titlebar" onPointerDown={(event) => {
         if (event.target.closest("button")) return;
@@ -2751,6 +2949,7 @@ function TasksWidgetWindow({
             onClick={() => {
               const next = !pinned;
               setPinned(next);
+              onPinnedChange?.(next);
               runWindowAction(() => setWindowPinned(next));
             }}
             aria-label={pinned ? "取消置顶" : "置顶"}
@@ -2790,10 +2989,35 @@ function TasksWidgetWindow({
             {panelRows.map((row) => {
               if (row.kind === "session") {
                 const run = row.run;
+                const hops = row.hops ?? [];
+                const hasEpisode = hops.length >= 2;
+                // 轮次行：胶卷/时间线与登记任务链同一套结构规则——时间线接管时
+                // 进度/错误行让位（每跳自带），胶卷速览时保留。时长按整轮算。
+                const roundRun = Number.isFinite(row.roundStartMs)
+                  ? { ...run, startedAtMs: row.roundStartMs }
+                  : run;
                 return (
                   <div className="widget-task-group" key={`session-run:${run.id}`}>
-                    {renderSessionRow(run)}
-                    {renderSessionSubLine(run)}
+                    {renderSessionRow(roundRun)}
+                    {hasEpisode && chainStyle === "strip" && (
+                      <div className="task-chain">
+                        <ChainFilmstrip
+                          hops={hops}
+                          currentTaskId={`session-run:${run.id ?? run.runId ?? run.sessionKey}`}
+                          agentNameMap={agentNameMap}
+                        />
+                      </div>
+                    )}
+                    {hasEpisode && chainStyle === "timeline" && (
+                      <TaskChainTimeline
+                        hops={hops}
+                        currentTaskId={`session-run:${run.id ?? run.runId ?? run.sessionKey}`}
+                        agentNameMap={agentNameMap}
+                        translate={translateProgress}
+                      />
+                    )}
+                    {(!hasEpisode || chainStyle === "strip") && renderSessionSubLine(run)}
+                    {(!hasEpisode || chainStyle === "strip") && renderSummaryLine(run.terminalSummary)}
                   </div>
                 );
               }
@@ -2809,6 +3033,7 @@ function TasksWidgetWindow({
                 <div className="widget-task-group" key={`${task.gateway}:${task.taskId}`}>
                   {renderActiveRow(task)}
                   {(!hasChain || chainStyle === "strip") && renderProgressLine(task)}
+                  {task.status !== "running" && renderSummaryLine(task.terminalSummary)}
                   {hasChain &&
                     (chainStyle === "strip" ? (
                       <div className="task-chain">
@@ -2835,50 +3060,22 @@ function TasksWidgetWindow({
               <p className="tasks-card-head">
                 星位上下文
                 {usageModelUniform ? ` · ${usageModelUniform}` : ""}
+                {idleSessions.length > 0 ? (
+                  <button
+                    type="button"
+                    className="tasks-usage-idle"
+                    aria-expanded={showIdleSessions}
+                    title="点开看全部空闲会话（从未对话或未产生用量）；再点收起"
+                    onClick={() => setShowIdleSessions((open) => !open)}
+                  >
+                    {" · 另有 "}{idleSessions.length}{" 个空闲会话"}
+                  </button>
+                ) : null}
               </p>
               <div className="tasks-usage-list">
-                {usageSessions.map((session) => {
-                  const name = agentDisplayName(agentNameMap, session.agentId) || session.agentId || session.key;
-                  const running = Boolean(session.hasActiveRun);
-                  const model = session.model || null;
-                  const estimate = Number.isFinite(session.estimatedPromptTokens) ? session.estimatedPromptTokens : null;
-                  const budget = Number.isFinite(session.contextTokenBudget) ? session.contextTokenBudget : null;
-                  const fillPct = estimate != null && budget > 0 ? Math.min(100, Math.round((estimate / budget) * 100)) : null;
-                  const tone = session.shouldCompact || (fillPct != null && fillPct >= 80) ? "warn" : "";
-                  const nums =
-                    estimate != null && budget != null
-                      ? `${formatCompactTokens(estimate)} / ${formatCompactTokens(budget)}`
-                      : budget != null
-                        ? `预算 ${formatCompactTokens(budget)}`
-                        : "—";
-                  const msgs = Number.isFinite(session.promptMessageCount) ? session.promptMessageCount : null;
-                  const lastSeen = Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
-                  // 会话形态角标：群 = 北斗矩阵群会话（接力跳所在），主 = 该星位主会话。
-                  const badge = session.isGroup ? "群" : (session.key ?? "").endsWith(":main") ? "主" : null;
-                  return (
-                    <div
-                      key={session.key}
-                      className="tasks-usage-row"
-                      title={`${session.key}${model ? `\n模型 ${model}` : ""}\n${estimate != null ? `上下文 ${estimate.toLocaleString()} tok` : "空闲会话，无上下文估算"}${budget != null ? ` · 预算 ${budget.toLocaleString()} tok` : ""}${msgs != null ? ` · ${msgs} 条消息` : ""}${lastSeen ? `\n最近活动 ${formatTaskAge(lastSeen)}` : ""}`}
-                    >
-                      <i className={`agent-status-dot tasks-usage-dot ${running ? "" : "tasks-usage-dot--idle"}`} aria-hidden="true" />
-                      <span className="tasks-usage-name">
-                        {name}
-                        {badge ? <em>{badge}</em> : null}
-                        {!usageModelUniform && model ? (
-                          <small className="tasks-usage-model">{model}</small>
-                        ) : null}
-                      </span>
-                      <span className={`task-context-bar ${fillPct == null ? "task-context-bar--empty" : ""}`}>
-                        <i className={tone ? `task-context-fill--${tone}` : undefined} style={fillPct != null ? { width: `${fillPct}%` } : undefined} />
-                      </span>
-                      <span className="tasks-usage-nums">
-                        {nums}
-                        {msgs != null ? <small>{msgs}条</small> : null}
-                      </span>
-                    </div>
-                  );
-                })}
+                {usageSessions.map((session) => renderUsageRow(session, false))}
+                {showIdleSessions &&
+                  idleSessions.map((session) => renderUsageRow(session, true))}
               </div>
             </div>
           )}
@@ -4596,9 +4793,19 @@ function MonitorSettingsCard() {
     Number(draft.staleThresholdSec) !== current.staleThresholdSec ||
     Number(draft.episodeGapMin) !== current.episodeGapMin ||
     Number(draft.failedWindowH) !== current.failedWindowH ||
+    Number(draft.historyWindowMin) !== current.historyWindowMin ||
     Number(draft.ledgerRetentionDays) !== current.ledgerRetentionDays ||
     Number(draft.missedWindowHours) !== current.missedWindowHours ||
-    Boolean(draft.translateProgress) !== current.translateProgress;
+    Number(draft.watermarkWarnPct) !== current.watermarkWarnPct ||
+    Boolean(draft.notifyOnFailure) !== current.notifyOnFailure ||
+    Boolean(draft.notifyOnComplete) !== current.notifyOnComplete ||
+    Number(draft.notifyAggregateMin) !== current.notifyAggregateMin ||
+    Number(draft.notifyStaySec) !== current.notifyStaySec ||
+    Boolean(draft.notifyQuietOn) !== current.notifyQuietOn ||
+    String(draft.notifyQuietStart) !== current.notifyQuietStart ||
+    String(draft.notifyQuietEnd) !== current.notifyQuietEnd ||
+    Boolean(draft.translateProgress) !== current.translateProgress ||
+    Boolean(draft.tasksEdgeDock) !== current.tasksEdgeDock;
 
   const apply = () => {
     saveMonitorConfig(draft);
@@ -4639,39 +4846,133 @@ function MonitorSettingsCard() {
           <span className="monitor-group-title">接力与台账</span>
           <div className="monitor-grid">
             {numberField("接力分段沉默上限（分钟，5–720）", "接力分段沉默上限分钟数", "episodeGapMin", 5, 720)}
-            {numberField("失败工作显示（小时，1–168）", "失败工作显示小时数", "failedWindowH", 1, 168)}
+            {numberField("失败记录保留（小时，1–168）", "失败记录保留小时数", "failedWindowH", 1, 168)}
+            {numberField("历史轮次回看（分钟，0=关闭，最长 7 天）", "历史轮次回看分钟数", "historyWindowMin", 0, 10080)}
             {numberField("台账保留期（天，1–90）", "台账保留期天数", "ledgerRetentionDays", 1, 90)}
             {numberField("漏采补记窗口（小时，1–72）", "漏采补记窗口小时数", "missedWindowHours", 1, 72)}
           </div>
         </section>
         <section className="monitor-group">
-          <span className="monitor-group-title">桌面小组件</span>
+          <span className="monitor-group-title">提醒与预警</span>
+          <div className="monitor-grid">
           <label className="monitor-field monitor-field--check">
             <input
               type="checkbox"
-              checked={draft.translateProgress}
-              aria-label="进度与报错中文显示"
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, translateProgress: event.target.checked }))
-              }
-            />
-            <span>进度与报错中文显示（映射 openclaw 工具名与常见报错）</span>
-          </label>
-          <label className="monitor-field monitor-field--check">
-            <input
-              type="checkbox"
-              checked={widgetTasks}
+              checked={draft.notifyEnabled}
+              aria-label="自绘提醒角标"
               onChange={(event) => {
                 const next = event.target.checked;
-                localStorage.setItem("metrik:tasksWidget", next ? "on" : "off");
-                setWidgetTasks(next);
-                // 独立小组件：勾选即开/关那扇常驻窗（幂等），不等下次启动。
-                setTasksWidgetWindow(next);
+                // 总开关即时生效（像任务小组件一样不等"保存参数"）：
+                // 窗口幂等开合 + 立刻落盘（只并入这一项，不带draft里其他未保存改动）。
+                setDraft((current) => ({ ...current, notifyEnabled: next }));
+                saveMonitorConfig({ ...loadMonitorConfig(), notifyEnabled: next });
+                setNotificationWindow(next);
                 window.dispatchEvent(new Event("metrik-monitor-changed"));
               }}
             />
-            <span>在桌面显示任务小组件（独立小窗）</span>
+            <span>自绘提醒角标（屏幕右下角弹卡）</span>
           </label>
+          <label className="monitor-field monitor-field--check">
+            <input
+              type="checkbox"
+              checked={draft.notifyOnFailure}
+              aria-label="轮次失败提醒"
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, notifyOnFailure: event.target.checked }))
+              }
+            />
+            <span>轮次失败提醒（真失败才响）</span>
+          </label>
+          <label className="monitor-field monitor-field--check">
+            <input
+              type="checkbox"
+              checked={draft.notifyOnComplete}
+              aria-label="轮次完成提醒"
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, notifyOnComplete: event.target.checked }))
+              }
+            />
+            <span>轮次完成提醒（默认关）</span>
+          </label>
+          {numberField("失败聚合窗口（分钟，2–60）", "失败聚合窗口分钟数", "notifyAggregateMin", 2, 60)}
+            {numberField("卡片停留（秒，4–30）", "提醒卡片停留秒数", "notifyStaySec", 4, 30)}
+          {numberField("上下文水位预警（%，0=关）", "上下文水位预警阈值百分比", "watermarkWarnPct", 0, 95)}
+          <label className="monitor-field monitor-field--check monitor-field--check--wide">
+            <input
+              type="checkbox"
+              checked={draft.notifyQuietOn}
+              aria-label="免打扰时段"
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, notifyQuietOn: event.target.checked }))
+              }
+            />
+            <span>免打扰时段</span>
+          </label>
+            <label className="monitor-field">
+              <span>免打扰开始</span>
+              <input
+                type="time"
+                value={draft.notifyQuietStart}
+                aria-label="免打扰开始时间"
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, notifyQuietStart: event.target.value }))
+                }
+              />
+            </label>
+            <label className="monitor-field">
+              <span>免打扰结束</span>
+              <input
+                type="time"
+                value={draft.notifyQuietEnd}
+                aria-label="免打扰结束时间"
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, notifyQuietEnd: event.target.value }))
+                }
+              />
+            </label>
+          </div>
+        </section>
+        <section className="monitor-group">
+          <span className="monitor-group-title">桌面小组件</span>
+          <div className="monitor-grid">
+            <label className="monitor-field monitor-field--check">
+              <input
+                type="checkbox"
+                checked={draft.translateProgress}
+                aria-label="进度与报错中文显示"
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, translateProgress: event.target.checked }))
+                }
+              />
+              <span>进度与报错中文显示</span>
+            </label>
+            <label className="monitor-field monitor-field--check">
+              <input
+                type="checkbox"
+                checked={widgetTasks}
+                onChange={(event) => {
+                  const next = event.target.checked;
+                  localStorage.setItem("metrik:tasksWidget", next ? "on" : "off");
+                  setWidgetTasks(next);
+                  // 独立小组件：勾选即开/关那扇常驻窗（幂等），不等下次启动。
+                  setTasksWidgetWindow(next);
+                  window.dispatchEvent(new Event("metrik-monitor-changed"));
+                }}
+              />
+              <span>显示任务小组件（独立小窗）</span>
+            </label>
+            <label className="monitor-field monitor-field--check">
+              <input
+                type="checkbox"
+                checked={draft.tasksEdgeDock}
+                aria-label="任务小组件贴边自动隐藏"
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, tasksEdgeDock: event.target.checked }))
+                }
+              />
+              <span>贴边自动隐藏（拖边收起，碰边弹出；置顶时不隐藏）</span>
+            </label>
+          </div>
         </section>
         <button
           type="button"
@@ -4685,7 +4986,11 @@ function MonitorSettingsCard() {
       <p className="gateway-hint">
         建议：同步 2–5 秒；无活动阈值 60–300 秒（北斗星位一轮思考加工具调用常超 30 秒，不宜过短）。
         接力分段按"交接沉默"切：星位间交接一直连续，一轮跑多久都是同一段，只有沉默超过上限
-        （如中途等你确认）才切下一段；失败工作显示 = 展开面板保留最近失败多久。台账保留期到期自动清理。
+        （如中途等你确认）才切下一段；失败记录保留 = 失败的工作在面板/迷你条留多久，过期自动消失
+        （成功的工作完成即走，不占位）；历史轮次回看 = 主窗任务页列出收尾的接力段多长时间内的（0 = 关闭）。
+        台账保留期到期自动清理；水位预警 = 星位上下文水位超过阈值时琥珀高亮并标"建议清理"（0 = 不预警）。
+        失败分诊自动进行：心跳静默跳过、重启中止、手动取消按"跳过"灰显，只有真失败才染红；
+        中文显示 = 映射 openclaw 工具名与常见报错；贴边隐藏 = 置顶时不隐藏。
       </p>
     </div>
   );
@@ -6149,6 +6454,8 @@ const TASK_STATUS_META = {
   timed_out: { label: "超时", className: "task-pill--failed" },
   cancelled: { label: "已取消", className: "task-pill--neutral" },
   lost: { label: "失联", className: "task-pill--failed" },
+  // 失败分诊（六案②）：failed 行里分诊出的良性未跑，灰显不染红
+  skipped: { label: "跳过", className: "task-pill--neutral" },
 };
 
 function TaskStatusPill({ status }) {
@@ -6301,7 +6608,8 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
   useLayoutEffect(() => {
     if (rootRef.current && onHeight) onHeight(rootRef.current.offsetHeight);
   });
-  const othersFailed = (others ?? []).some((row) => row.tone === "failed");
+  const othersFailed = (others ?? []).filter((row) => row.tone === "failed").length;
+  const othersSkipped = (others ?? []).filter((row) => row.tone === "skipped").length;
   const visibleOthers = (others ?? []).slice(0, 3);
   return (
     <div
@@ -6314,10 +6622,17 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
         <strong className="tasks-hopcard-title">{hop.title || hop.taskId}</strong>
         <TaskStatusPill status={hop.status} />
       </header>
-      {hop.status === "running" && hop.progressSummary ? (
-        <p className="tasks-hopcard-progress">
+      {/* 成果速览（六案①）：收工跳带北斗的中文结论（最后一跳 assistant 原话） */}
+      {hop.terminalSummary ? (
+        <p className="tasks-hopcard-summary" title={hop.terminalSummary}>
+          {hop.terminalSummary}
+        </p>
+      ) : null}
+      {hop.status === "running" && (hop.progressSummary || hop.lastToolName) ? (
+        <p className="tasks-hopcard-progress" title={hop.lastToolName ?? hop.progressSummary}>
           <em>正在：</em>
-          {toolProgressLabel(hop.progressSummary, translate)}
+          {toolProgressLabel(hop.lastToolName, translate) || toolProgressLabel(hop.progressSummary, translate)}
+          {Number.isFinite(hop.toolUseCount) && hop.toolUseCount > 0 ? ` · 已 ${hop.toolUseCount} 次工具` : ""}
         </p>
       ) : null}
       {tone === "failed" && hop.error ? (
@@ -6325,12 +6640,19 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
           {sessionErrorText(hop.error, translate)}
         </p>
       ) : null}
+      {/* 良性未跑（六案②失败分诊）：灰显说明，不染红不占失败区 */}
+      {tone === "skipped" ? (
+        <p className="tasks-hopcard-skipped" title={hop.error || undefined}>
+          {benignStateOf(hop.error, hop.status)}
+          {hop.error && hop.status !== "cancelled" ? `（${hop.error}）` : ""}
+        </p>
+      ) : null}
       {visibleOthers.length > 0 && (
         <div className="tasks-hopcard-extra">
           <span className="tasks-hopcard-extra-head">
-            {othersFailed
-              ? `其他任务 · ${(others ?? []).length}（${(others ?? []).filter((row) => row.tone === "failed").length} 失败）`
-              : `其他进行中 · ${(others ?? []).length}`}
+            {!othersFailed && !othersSkipped
+              ? `其他进行中 · ${(others ?? []).length}`
+              : `其他任务 · ${(others ?? []).length}${othersFailed ? `（${othersFailed} 失败）` : ""}${othersSkipped ? `（${othersSkipped} 跳过）` : ""}`}
           </span>
           {visibleOthers.map((row) => {
             // 两类行统一口径：登记任务取 task 字段，会话工作取 run 字段
@@ -6344,14 +6666,15 @@ function HopHoverCard({ hop, index, total, others, agentNameMap, currentTaskId, 
               : row.task.title || row.task.taskId;
             const rowName = agentDisplayName(agentNameMap, agentId) || agentId || "?";
             const failed = row.tone === "failed";
-            const pending = !failed && (isSession ? false : row.task.status === "queued");
+            const skipped = row.tone === "skipped";
+            const pending = !failed && !skipped && (isSession ? false : row.task.status === "queued");
             return (
               <span key={rowKey} className="tasks-hopcard-extra-row">
                 <i
-                  className={`tasks-hopcard-extra-dot${failed ? " tasks-hopcard-extra-dot--failed" : pending ? " tasks-hopcard-extra-dot--pending" : ""}`}
+                  className={`tasks-hopcard-extra-dot${failed ? " tasks-hopcard-extra-dot--failed" : pending ? " tasks-hopcard-extra-dot--pending" : skipped ? " tasks-hopcard-extra-dot--skipped" : ""}`}
                   aria-hidden="true"
                 />
-                <span className={`tasks-hopcard-extra-title${failed ? " tasks-hopcard-extra-title--failed" : ""}`}>
+                <span className={`tasks-hopcard-extra-title${failed ? " tasks-hopcard-extra-title--failed" : ""}${skipped ? " tasks-hopcard-extra-title--skipped" : ""}`}>
                   {text}
                 </span>
                 <span className="tasks-hopcard-extra-agent">{rowName}</span>
@@ -6397,6 +6720,12 @@ function TaskChainTimeline({ hops, currentTaskId, agentNameMap, translate = true
             {/* 当前跳的标题/时长就是组头那份，不重复；其余跳是各自的任务名 */}
             {!current && <span className="task-timeline-title">{hop.title || hop.taskId}</span>}
             {!current && duration ? <small>{duration}</small> : null}
+            {/* 成果速览（六案①）：收工跳附该轮中文结论，两行截断，悬浮看全文 */}
+            {!current && hop.terminalSummary ? (
+              <p className="task-timeline-summary" title={hop.terminalSummary}>
+                {hop.terminalSummary}
+              </p>
+            ) : null}
             {current && hop.progressSummary ? (
               <p className="task-timeline-progress" title={hop.progressSummary}>
                 <em>正在：</em>
@@ -6410,16 +6739,255 @@ function TaskChainTimeline({ hops, currentTaskId, agentNameMap, translate = true
   );
 }
 
-function TasksSection({ gateways, onGatewaysChanged }) {
-  const [state, setState] = useState({ status: "loading", filter: "active", data: null });
+/// 自绘提醒角标窗（六案 B·自绘壳，Leo 拍板）：屏幕右下角玻璃小卡堆。
+/// 触发层 = detectRoundNotifications 纯函数（本窗每拍跑台账 diff），壳只管
+/// 倒计时/悬停暂停/点击跳转（A 案：点卡展开任务面板，Rust 仲裁兜底主窗）。
+/// 窗口显隐自管（卡堆空自藏、来卡自弹），总开关在设置（notifyEnabled）。
+function NotificationWindow({ transparent, glassMode, glassTint, glassInk, glassAlpha, onClose }) {
+  const shellAppearance = glassShellAppearance("widget", {
+    transparent,
+    glassMode,
+    glassTint,
+    glassInk,
+    isMac: IS_MAC,
+    loading: false,
+  });
+  // 星名映射：真机走主窗的定期广播（各窗口 localStorage 不共享）；浏览器
+  // 预览没有事件总线，用 localStorage 种子兜底。
+  const [agentNames, setAgentNames] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("metrik:agentNames") || "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    let unlistenPromise;
+    onAgentNames((map) => setAgentNames(map));
+    return () => {
+      unlistenPromise?.then((unlisten) => unlisten());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const snapshotRef = useRef({ failedSeen: {}, rounds: {} });
+  const rootRef = useRef(null);
+  const [toasts, setToasts] = useState([]);
+
+  // 同步拍：台账 diff → 纯函数出提醒 → 按开关过滤入栈（最多 3 张，新的顶上）。
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      if (!PREVIEW_EAGER && document.visibilityState === "hidden") return;
+      const monitor = loadMonitorConfig();
+      if (!monitor.notifyEnabled) return;
+      const data = await loadSessionRuns().catch(() => null);
+      if (!alive || !data) return;
+      const { toasts: fresh, next } = detectRoundNotifications(
+        data.runs ?? [],
+        snapshotRef.current,
+        {
+          episodeGapMin: monitor.episodeGapMin,
+          quietOn: monitor.notifyQuietOn,
+          quietStart: monitor.notifyQuietStart,
+          quietEnd: monitor.notifyQuietEnd,
+          aggregateMin: monitor.notifyAggregateMin,
+          agentNames,
+        },
+        Date.now(),
+      );
+      snapshotRef.current = next;
+      const allowed = fresh.filter((toast) =>
+        toast.kind === "ok" ? monitor.notifyOnComplete : monitor.notifyOnFailure,
+      );
+      if (!allowed.length) return;
+      const stayMs = monitor.notifyStaySec * 1000;
+      setToasts((current) => {
+        const known = new Set(current.map((toast) => toast.id));
+        const added = allowed
+          .filter((toast) => !known.has(toast.id))
+          .map((toast) => ({ ...toast, totalMs: stayMs, leftMs: stayMs, paused: false }));
+        return [...current, ...added].slice(-3);
+      });
+    };
+    tick();
+    const timer = window.setInterval(tick, Math.max(1, loadMonitorConfig().refreshIntervalSec) * 1000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 倒计时节拍：未暂停的卡每 250ms 掉一格，走完即出栈。
+  useEffect(() => {
+    if (!toasts.length) return undefined;
+    const timer = window.setInterval(() => {
+      setToasts((current) => current
+        .map((toast) => (toast.paused ? toast : { ...toast, leftMs: toast.leftMs - 250 }))
+        .filter((toast) => toast.leftMs > 0));
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [toasts.length]);
+
+  // 窗口自管显隐 + 底边锚定改高（setSize 默认向下长，必须重钉底边）。
+  useLayoutEffect(() => {
+    if (!isTauriRuntime()) return;
+    const height = rootRef.current?.offsetHeight ?? 1;
+    runWindowAction(() => repinNotificationWindow(height));
+    runWindowAction(() => setSelfWindowVisible(toasts.length > 0));
+  }, [toasts]);
+
+  const dismiss = (id) => setToasts((current) => current.filter((toast) => toast.id !== id));
+  const setPaused = (id, paused) =>
+    setToasts((current) => current.map((toast) => (toast.id === id ? { ...toast, paused } : toast)));
+
+  return (
+    <main
+      ref={rootRef}
+      className={`${shellAppearance.className} badge-window`}
+      style={{ ...shellAppearance.style, width: "344px" }}
+    >
+      <h1 className="sr-only">Metrik 提醒</h1>
+      {toasts.length === 0 ? (
+        <p className="badge-empty">提醒角标待命…（真失败/完成的轮次会在这里弹出，总开关在 设置 → 任务追踪 → 提醒）</p>
+      ) : (
+        <div className="badge-stack">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`badge-toast badge-toast--${toast.kind}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                expandRoundDetails();
+                dismiss(toast.id);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  expandRoundDetails();
+                  dismiss(toast.id);
+                }
+              }}
+              onMouseEnter={() => setPaused(toast.id, true)}
+              onMouseLeave={() => setPaused(toast.id, false)}
+            >
+              <span className="badge-glyph" aria-hidden="true">
+                {toast.kind === "ok" ? "✓" : toast.kind === "merge" ? "!" : "✕"}
+              </span>
+              <span className="badge-main">
+                <span className="badge-title">{toast.title}</span>
+                <span className="badge-body">{toast.body}</span>
+                {toast.meta ? <span className="badge-meta">{toast.meta}</span> : null}
+              </span>
+              <button
+                type="button"
+                className="badge-x"
+                aria-label="清除这条提醒"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  dismiss(toast.id);
+                }}
+              >
+                ✕
+              </button>
+              <i
+                className="badge-countdown"
+                style={{ width: `${Math.max(0, Math.min(100, (toast.leftMs / toast.totalMs) * 100))}%` }}
+                aria-hidden="true"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+      <footer className="badge-footer">
+        <button type="button" className="badge-close" onClick={onClose} aria-label="关闭提醒角标">
+          关闭提醒
+        </button>
+      </footer>
+    </main>
+  );
+}
+
+/// 历史轮次的时间标签：今天/昨天带时刻，更早带日期。
+function formatHistoryTime(ms, now = Date.now()) {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" });
+  if (new Date(now).toDateString() === date.toDateString()) return `今天 ${time}`;
+  if (new Date(now - 86_400_000).toDateString() === date.toDateString()) return `昨天 ${time}`;
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+}
+
+/// 历史轮次窗口的人话单位（分钟 → 分钟/小时/天）。
+function formatHistoryWindow(minutes) {
+  if (!Number.isFinite(minutes) || minutes <= 0) return "已关闭";
+  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 1440) return `${Math.round((minutes / 60) * 10) / 10} 小时`;
+  return `${Math.round((minutes / 1440) * 10) / 10} 天`;
+}
+
+/// 定时任务看板的下次运行倒计时（六案③）。
+function formatCronNext(nextMs, now = Date.now()) {
+  if (!Number.isFinite(nextMs)) return null;
+  const diff = nextMs - now;
+  if (diff <= 0) return "即将运行";
+  const min = Math.round(diff / 60_000);
+  if (min < 1) return "1 分钟内";
+  if (min < 60) return `${min} 分钟后`;
+  const hours = Math.round((min / 60) * 10) / 10;
+  if (hours < 24) return `${hours} 小时后`;
+  return `${Math.round((hours / 24) * 10) / 10} 天后`;
+}
+
+function TasksSection({ gateways, onGatewaysChanged }) {  const [state, setState] = useState({ status: "loading", filter: "active", data: null });
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [lastSync, setLastSync] = useState(null);
   const [live, setLive] = useState(false);
   const [agentsSnap, setAgentsSnap] = useState(null);
   const [monitor, setMonitor] = useState(() => loadMonitorConfig());
+  // 历史轮次（主窗"任务"页）：台账里的会话 run 按 gap 链分段回看；
+  // expandedEpisode = 展开跳序回放的轮次下标（null = 全部收起）。
+  const [sessionRuns, setSessionRuns] = useState([]);
+  // 定时任务看板（六案③）：cron.list 本地镜像 + 任务账本对账"上次结果"。
+  // cronTasks = 无状态过滤的全量任务行（sourceId join 用），与看板同拍刷新。
+  const [cronJobs, setCronJobs] = useState([]);
+  const [cronTasks, setCronTasks] = useState([]);
+  const [expandedEpisode, setExpandedEpisode] = useState(null);
   const stateRef = useRef(state);
   stateRef.current = state;
+  // 钩子必须全在条件 return 之前（loading 早退时少跑钩子 = React 崩）。
+  const agentNameMap = useMemo(() => buildAgentNameMap(agentsSnap?.agents), [agentsSnap]);
+  const historyEpisodes = useMemo(() => {
+    const windowMs = (monitor.historyWindowMin ?? 0) * 60_000;
+    if (!windowMs || !sessionRuns.length) return [];
+    const now = Date.now();
+    return groupSessionEpisodes(sessionRuns, Math.max(5, monitor.episodeGapMin) * 60_000).filter(
+      (episode) => {
+        if (now - episode.lastActivityMs >= windowMs) return false;
+        const latest = episode.runs[episode.runs.length - 1];
+        return latest.status !== "running";
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionRuns, monitor.historyWindowMin, monitor.episodeGapMin]);
+
+  // 定时任务看板"上次结果"对账（六案③）：任务账本 automation_run 行按
+  // sourceId（= cron job UUID）归到各 job，取开始时间最新一条。演示数据
+  // 不走这里（job 自带 lastRunStatus 演示字段）。钩子必须全在条件 return 前。
+  const lastRunByJob = useMemo(() => {
+    const map = new Map();
+    for (const task of cronTasks) {
+      if (task?.kind !== "automation_run" || !task.sourceId) continue;
+      const started = task.startedAtMs ?? 0;
+      const current = map.get(task.sourceId);
+      if (!current || started > (current.startedAtMs ?? 0)) map.set(task.sourceId, task);
+    }
+    return map;
+  }, [cronTasks]);
 
   const load = useCallback((filter) => {
     loadGatewayTasks(filter === "all" ? null : filter)
@@ -6443,7 +7011,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
     let alive = true;
     load(stateRef.current.filter);
     const tick = async () => {
-      if (!alive || document.visibilityState === "hidden") return;
+      if (!alive || (!PREVIEW_EAGER && document.visibilityState === "hidden")) return;
       const filter = stateRef.current.filter;
       if (isTauriRuntime() && gateways.length) {
         try {
@@ -6467,6 +7035,21 @@ function TasksSection({ gateways, onGatewaysChanged }) {
           .catch(() => {});
       }
       load(filter);
+      // 历史轮次同拍刷新：台账只读（不触发网关轮询），与任务列表同一节奏。
+      loadSessionRuns()
+        .then((data) => alive && setSessionRuns(data.runs ?? []))
+        .catch(() => {});
+      // 定时任务看板同拍刷新：读回走本地镜像（不联网）；触发拉取由 Rust
+      // 60 秒节流兜住，每拍调用也只真连一次每分钟。
+      loadCronJobs()
+        .then((data) => alive && setCronJobs(data.jobs ?? []))
+        .catch(() => {});
+      loadGatewayTasks(null)
+        .then((data) => alive && setCronTasks(data.tasks ?? []))
+        .catch(() => {});
+      if (gateways.length) {
+        refreshCronJobs(gateways).catch(() => {});
+      }
     };
     tick();
     const timer = setInterval(tick, Math.max(1, monitor.refreshIntervalSec) * 1000);
@@ -6534,6 +7117,58 @@ function TasksSection({ gateways, onGatewaysChanged }) {
   ];
   const now = Date.now();
   const STALE_MS = Math.max(10, monitor.staleThresholdSec) * 1000; // 无活动判定阈值（设置页可调）
+
+  // 定时任务看板行（六案③）：镜像 job + 上次结果（分诊口径着色，completed
+  // 是网关侧对 automation_run 的叫法，归一成 succeeded）+ 下次运行估算。
+  const cronBoard = cronJobs.map((job) => {
+    const ledgerLast = lastRunByJob.get(job.id);
+    const raw = ledgerLast
+      ? {
+          status: ledgerLast.status === "completed" ? "succeeded" : ledgerLast.status,
+          error: ledgerLast.error,
+          at: ledgerLast.endedAtMs ?? ledgerLast.startedAtMs,
+        }
+      : job.lastRunStatus
+        ? {
+            status: job.lastRunStatus === "completed" ? "succeeded" : job.lastRunStatus,
+            error: job.lastRunError,
+            at: job.lastRunAtMs,
+          }
+        : null;
+    const tone = raw ? hopToneOf({ status: raw.status, taskId: job.id, error: raw.error }) : null;
+    return {
+      id: job.id,
+      name: job.name,
+      description: job.description,
+      enabled: job.enabled,
+      scheduleExpr: job.scheduleExpr,
+      last: tone && raw ? { tone: tone.tone, text: `${tone.state} · ${formatHistoryTime(raw.at, now)}` } : null,
+      // 停用的任务没有"下次"可言
+      next: job.enabled ? formatCronNext(cronNextRunMs(job.scheduleExpr, now), now) : null,
+    };
+  });
+  // 链路全景（六案④）：进行中的接力轮（同群聊一串，逐跳带原话/结论）+
+  // 登记任务链（父子/runId 边，≥2 跳才算链）。
+  const relayEpisodes = activeRelayEpisodes(
+    sessionRuns,
+    sessionRuns.filter((run) => run.status === "running"),
+    Math.max(5, monitor.episodeGapMin) * 60_000,
+  );
+  const panoramaChainIndex = buildTaskChains(cronTasks);
+  const liveTaskChains = (() => {
+    const seen = new Set();
+    const chains = [];
+    for (const task of cronTasks) {
+      if (task?.status !== "running") continue;
+      const hops = chainHopsFor(task, panoramaChainIndex);
+      if (hops.length < 2) continue;
+      const rootId = hops[0].taskId;
+      if (seen.has(rootId)) continue;
+      seen.add(rootId);
+      chains.push({ rootId, hops, currentTaskId: task.taskId });
+    }
+    return chains;
+  })();
 
   return (
     <main className="tasks-section">
@@ -6652,7 +7287,7 @@ function TasksSection({ gateways, onGatewaysChanged }) {
                   <div className="task-row-title">
                     <TaskStatusPill status={task.status} />
                     {stale && <span className="task-pill task-pill--stale">疑似卡住</span>}
-                    <strong>{task.title || task.label || task.taskId}</strong>
+                    <strong>{cleanTaskTitle(task) || task.label || task.taskId}</strong>
                   </div>
                   <div className="task-row-meta">
                     <span className="task-meta-gateway">{task.gateway}</span>
@@ -6671,6 +7306,131 @@ function TasksSection({ gateways, onGatewaysChanged }) {
           {state.filter !== "all" && <p className="tasks-empty">当前筛选下暂无任务。</p>}
         </div>
       ) : null}
+
+      {(relayEpisodes.length > 0 || liveTaskChains.length > 0) && (
+        <section className="chain-panorama" aria-label="链路全景">
+          <h2 className="history-episodes-head">
+            链路全景
+            <small>进行中的工作链：接力轮逐跳回放（带派活原话与收工结论），登记任务链按父子/runId 拼链</small>
+          </h2>
+          {relayEpisodes.length > 0 && (
+            <div className="chain-panorama-list">
+              {relayEpisodes.map((episode) => (
+                <div className="chain-panorama-item" key={episode.chatId}>
+                  <TaskChainTimeline
+                    hops={episode.hops}
+                    currentTaskId={episode.hops[episode.hops.length - 1]?.taskId}
+                    agentNameMap={agentNameMap}
+                    translate={monitor.translateProgress}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          {liveTaskChains.length > 0 && (
+            <div className="chain-panorama-list">
+              {liveTaskChains.map((chain) => (
+                <div className="chain-panorama-item" key={chain.rootId}>
+                  <TaskChainTimeline
+                    hops={chain.hops}
+                    currentTaskId={chain.currentTaskId}
+                    agentNameMap={agentNameMap}
+                    translate={monitor.translateProgress}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+      {cronBoard.length > 0 && (
+        <section className="cron-board" aria-label="定时任务">
+          <h2 className="history-episodes-head">
+            定时任务
+            <small>北斗挂的自动化（巡检/心跳/记忆整理），排程与上次结果一览；镜像 ≤1 分钟延迟</small>
+          </h2>
+          <div className="cron-board-list">
+            {cronBoard.map((row) => (
+              <div className="cron-board-row" key={row.id} title={row.description || row.name || row.id}>
+                <span className={`cron-pill ${row.enabled ? "cron-pill--on" : "cron-pill--off"}`}>
+                  {row.enabled ? "启用" : "停用"}
+                </span>
+                <div className="cron-board-main">
+                  <span className="cron-board-name">{row.name || row.id}</span>
+                  <span className="cron-board-sched">{cronScheduleText(row.scheduleExpr) || "—"}</span>
+                </div>
+                <span className="cron-board-last">
+                  {row.last ? (
+                    <>
+                      <i className={`cron-dot cron-dot--${row.last.tone}`} aria-hidden="true" />
+                      {row.last.text}
+                    </>
+                  ) : (
+                    <span className="cron-board-last--none">暂无运行记录</span>
+                  )}
+                </span>
+                <span className="cron-board-next">{row.next ?? "—"}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      {historyEpisodes.length > 0 && (
+        <section className="history-episodes" aria-label="历史轮次">
+          <h2 className="history-episodes-head">
+            历史轮次
+            <small>
+              近 {formatHistoryWindow(monitor.historyWindowMin)}
+              ，收尾的接力段按交接时序回放；窗口在 设置 → 任务追踪 里可调（0 = 关闭）
+            </small>
+          </h2>
+          <div className="history-episode-list">
+            {historyEpisodes.map((episode) => {
+              const latest = episode.runs[episode.runs.length - 1];
+              const hops = episode.runs.map(sessionRunHop);
+              // 失败计数走分诊口径（六案②）：良性未跑（静默跳过等）不算失败
+              const failedCount = hops.filter((hop) => hopToneOf(hop).tone === "failed").length;
+              const episodeKey = `${episode.runs[0].id ?? episode.runs[0].sessionKey}:${episode.startedAtMs}`;
+              const expanded = expandedEpisode === episodeKey;
+              const title = latest.title || latest.fallbackTitle || "会话工作";
+              return (
+                <article
+                  key={episodeKey}
+                  className={`history-episode${expanded ? " is-expanded" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className="history-episode-row"
+                    aria-expanded={expanded}
+                    onClick={() => setExpandedEpisode(expanded ? null : episodeKey)}
+                  >
+                    <span
+                      className={`history-episode-dot${failedCount ? " history-episode-dot--failed" : ""}`}
+                      aria-hidden="true"
+                    />
+                    <span className="history-episode-time">{formatHistoryTime(episode.startedAtMs, now)}</span>
+                    <span className="history-episode-title" title={title}>{title}</span>
+                    <small className="history-episode-meta">
+                      {formatTaskDuration(episode.startedAtMs, episode.lastActivityMs) || "—"}
+                      {" · "}{hops.length} 跳{failedCount ? ` · ${failedCount} 失败` : ""}
+                    </small>
+                  </button>
+                  {expanded && (
+                    <div className="history-episode-detail">
+                      <TaskChainTimeline
+                        hops={hops}
+                        currentTaskId={hops[hops.length - 1]?.taskId}
+                        agentNameMap={agentNameMap}
+                        translate={monitor.translateProgress}
+                      />
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </main>
   );
 }
@@ -6924,6 +7684,7 @@ function initialWindowMode() {
   const urlView = new URLSearchParams(window.location.search).get("view");
   if (urlView === "expanded") return "expanded";
   if (urlView === "tasks") return "tasks-widget";
+  if (urlView === "notifications") return "notifications";
   // macOS 的零占地摘要属于菜单栏状态图标，不再把面板压成一条悬浮胶囊。
   if (IS_MAC) return "compact";
   // 上次收成胶囊条则恢复；expanded 不恢复。
@@ -6988,6 +7749,27 @@ export function App() {
     return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // 自绘提醒角标窗：总开关开着且已配网关 → 启动同样带起（创建后隐藏待命，
+  // 有卡才自弹）。通知窗自身不触发（它就是要被带起的那扇窗）。
+  useEffect(() => {
+    if (viewMode === "notifications") return undefined;
+    if (!loadMonitorConfig().notifyEnabled) return undefined;
+    if (!gateways.length) return undefined;
+    setNotificationWindow(true);
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 提醒卡点击的 A 案兜底：小组件不在，Rust 唤主窗并广播切到「任务」页。
+  useEffect(() => {
+    if (viewMode === "notifications") return undefined;
+    let unlistenPromise;
+    onNavTasks(() => setActiveNav("tasks"));
+    return () => {
+      unlistenPromise?.then((unlisten) => unlisten());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 任务小组件独立后，主窗不再轮询任务/星位数据——只有任务小窗自己拉。
   const widgetTasksFeed = useWidgetTasksFeed(gateways, viewMode === "tasks-widget");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -7328,6 +8110,9 @@ export function App() {
   viewModeRef.current = viewMode;
   const stripOrientationRef = useRef(stripOrientation);
   stripOrientationRef.current = stripOrientation;
+  // 任务小组件自己的置顶状态：与主窗 pinned 互相独立，边缘挂靠在
+  // tasks-widget 形态下要看这一份（置顶 = 常驻，不参与贴边隐藏）。
+  const tasksWidgetPinnedRef = useRef(false);
   // 变形前的形态：applyWindowMode 的 fromMode 用它按形态分别记位，互不污染。
   const previousViewModeRef = useRef(viewMode);
 
@@ -7499,11 +8284,18 @@ export function App() {
     };
   }, []);
 
-  // 边缘挂靠：拖到屏幕上缘自动收起，鼠标碰边弹出。
+  // 边缘挂靠：拖到屏幕上缘自动收起，鼠标碰边弹出。任务小组件默认不参与
+  // （它有自己的置顶/显隐语义），设置里勾了"贴边自动隐藏"才放行——设置在
+  // 主窗改，小组件窗每拍现读配置，一个轮询周期内生效（跨窗无事件）。
   useEffect(() => {
     const stopPromise = startEdgeDock({
       getMode: () => viewModeRef.current,
-      getPinned: () => pinnedRef.current,
+      getPinned: () => (
+        viewModeRef.current === "tasks-widget"
+          ? tasksWidgetPinnedRef.current
+          : pinnedRef.current
+      ),
+      canDockTasksWidget: () => loadMonitorConfig().tasksEdgeDock,
     });
     return () => {
       stopPromise.then((stop) => stop?.());
@@ -7898,6 +8690,19 @@ export function App() {
     loadSnapshot(currentPeriod.current, { force: true });
   }, [loadSnapshot]);
 
+  if (viewMode === "notifications") {
+    return (
+      <NotificationWindow
+        transparent={transparent}
+        glassMode={glassMode}
+        glassTint={glassTint}
+        glassInk={glassInk}
+        glassAlpha={shellGlassAlpha}
+        onClose={() => runWindowAction(() => setNotificationWindow(false))}
+      />
+    );
+  }
+
   if (viewMode === "tasks-widget") {
     return (
       <TasksWidgetWindow
@@ -7910,6 +8715,9 @@ export function App() {
         onCycleAppearance={handleToggleTransparent}
         onOpenExpanded={() => runWindowAction(() => showMainExpanded())}
         onClose={() => runWindowAction(() => setTasksWidgetWindow(false))}
+        onPinnedChange={(next) => {
+          tasksWidgetPinnedRef.current = next;
+        }}
       />
     );
   }

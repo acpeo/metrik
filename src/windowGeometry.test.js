@@ -3,10 +3,12 @@ import test from "node:test";
 
 import {
   desyncHealRetryDelayMs,
+  edgeDockHiddenPosition,
   floatingViewportSize,
   horizontalStripTargetWidth,
   horizontalTasksHoverLayout,
   isDockAnchorPosition,
+  isDockGeometryCurrent,
   isStableFloatingMode,
   monitorForWindowPosition,
   physicalWindowSize,
@@ -37,6 +39,36 @@ test("transient strip geometry never participates in persistent floating state",
   assert.equal(isStableFloatingMode("strip-vertical"), true);
   assert.equal(isStableFloatingMode("strip-vertical", true), false);
   assert.equal(isStableFloatingMode("expanded"), false);
+});
+
+test("docked window parks with only a thin sliver inside the work area", () => {
+  const scale = 1.25;
+  const peek = Math.round(6 * scale);
+  const rightDock = { edge: "right", x: 1500, y: 100, width: 400, height: 500, left: 0, top: 0, right: 1920, bottom: 1080, scale };
+  assert.deepEqual(edgeDockHiddenPosition(rightDock), { x: 1920 - peek, y: 100 });
+  const leftDock = { edge: "left", x: 0, y: 100, width: 400, height: 500, left: 0, top: 0, right: 1920, bottom: 1080, scale };
+  assert.deepEqual(edgeDockHiddenPosition(leftDock), { x: 0 - 400 + peek, y: 100 });
+  const topDock = { edge: "top", x: 100, y: 0, width: 400, height: 500, left: 0, top: 0, right: 1920, bottom: 1080, scale };
+  assert.deepEqual(edgeDockHiddenPosition(topDock), { x: 100, y: 0 - 500 + peek });
+  const bottomDock = { edge: "bottom", x: 100, y: 580, width: 400, height: 500, left: 0, top: 0, right: 1920, bottom: 1080, scale };
+  assert.deepEqual(edgeDockHiddenPosition(bottomDock), { x: 100, y: 1080 - peek });
+  assert.equal(edgeDockHiddenPosition(null), null);
+});
+
+test("dock geometry check fails when the window moved or was resized off its anchor", () => {
+  const scale = 1;
+  const dock = { edge: "right", x: 1600, y: 100, width: 320, height: 384, left: 0, top: 0, right: 1920, bottom: 1080, scale };
+  // 显形停在与锚点一致的位置、尺寸没变 → 仍在锚点上。
+  assert.equal(isDockGeometryCurrent({ x: 1600, y: 100 }, { width: 320, height: 384 }, dock), true);
+  // 折叠面板改了尺寸（顶左不动）→ 锚点过期，挂靠要释放重估。
+  assert.equal(isDockGeometryCurrent({ x: 1600, y: 100 }, { width: 42, height: 224 }, dock), false);
+  // 外力位移（拖动中）→ 锚点过期。
+  assert.equal(isDockGeometryCurrent({ x: 1500, y: 100 }, { width: 320, height: 384 }, dock), false);
+  // 收起态用停泊位对账，不能拿显形锚点误判。
+  const parked = edgeDockHiddenPosition(dock);
+  assert.equal(isDockGeometryCurrent(parked, { width: 320, height: 384 }, dock, true), true);
+  assert.equal(isDockGeometryCurrent({ x: 1600, y: 100 }, { width: 320, height: 384 }, dock, true), false);
+  assert.equal(isDockGeometryCurrent(null, { width: 320, height: 384 }, dock), false);
 });
 
 function monitor(x, width, scaleFactor, workHeight = 1080) {
