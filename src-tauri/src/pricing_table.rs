@@ -8,7 +8,7 @@
 use super::Pricing;
 
 /// 价格表的生成日期，透传给前端做"估算截至"标注。
-pub const PRICING_AS_OF: &str = "2026-09-28";
+pub const PRICING_AS_OF: &str = "2026-10-05";
 
 // 每行一个模型：rustfmt 会把它拆成每条六行（近千行），生成结果与格式化结果
 // 互相打架。这是生成文件，保持一行一条更好读也更好 diff。
@@ -35,11 +35,13 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("claude-sonnet-4-5-20250929", Pricing { input: 3.0, cache_read: 0.3, cache_write: 3.75, output: 15.0 }),
     ("claude-sonnet-4-6", Pricing { input: 3.0, cache_read: 0.3, cache_write: 3.75, output: 15.0 }),
     ("claude-sonnet-5", Pricing { input: 2.0, cache_read: 0.2, cache_write: 2.5, output: 10.0 }),
+    ("claude-sonnet-5-5", Pricing { input: 2.0, cache_read: 0.2, cache_write: 2.5, output: 10.0 }),
     ("computer-use-preview", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 12.0 }),
     ("daybreak-blue-latest", Pricing { input: 4.0, cache_read: 0.4, cache_write: 5.0, output: 20.0 }),
     ("daybreak-red-latest", Pricing { input: 12.5, cache_read: 1.25, cache_write: 15.625, output: 75.0 }),
     ("deep-research-max-preview-04-2026", Pricing { input: 2.0, cache_read: 2.0, cache_write: 0.0, output: 12.0 }),
     ("deep-research-preview-04-2026", Pricing { input: 2.0, cache_read: 2.0, cache_write: 0.0, output: 12.0 }),
+    ("deep-research-pro-preview-12-2025", Pricing { input: 2.0, cache_read: 2.0, cache_write: 0.0, output: 12.0 }),
     ("ft:gpt-3.5-turbo", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 6.0 }),
     ("ft:gpt-3.5-turbo-0125", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 6.0 }),
     ("ft:gpt-3.5-turbo-0613", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 6.0 }),
@@ -164,6 +166,7 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("gpt-6-astra", Pricing { input: 10.0, cache_read: 1.0, cache_write: 12.5, output: 50.0 }),
     ("gpt-6-luna", Pricing { input: 0.1, cache_read: 0.01, cache_write: 0.125, output: 0.5 }),
     ("gpt-6-sol", Pricing { input: 2.0, cache_read: 0.2, cache_write: 2.5, output: 10.0 }),
+    ("gpt-6.1-sol", Pricing { input: 2.0, cache_read: 0.1, cache_write: 2.5, output: 10.0 }),
     ("gpt-audio", Pricing { input: 2.5, cache_read: 2.5, cache_write: 0.0, output: 10.0 }),
     ("gpt-audio-1.5", Pricing { input: 2.5, cache_read: 2.5, cache_write: 0.0, output: 10.0 }),
     ("gpt-audio-2025-08-28", Pricing { input: 2.5, cache_read: 2.5, cache_write: 0.0, output: 10.0 }),
@@ -171,6 +174,7 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("gpt-audio-mini-2025-12-15", Pricing { input: 0.6, cache_read: 0.6, cache_write: 0.0, output: 2.4 }),
     ("gpt-daybreak-blue-latest", Pricing { input: 4.0, cache_read: 0.4, cache_write: 5.0, output: 20.0 }),
     ("gpt-daybreak-red-latest", Pricing { input: 12.5, cache_read: 1.25, cache_write: 15.625, output: 75.0 }),
+    ("gpt-rosalind-research", Pricing { input: 5.0, cache_read: 0.5, cache_write: 0.0, output: 25.0 }),
     ("grok-4.20", Pricing { input: 1.25, cache_read: 0.2, cache_write: 0.0, output: 2.5 }),
     ("grok-4.20-0309", Pricing { input: 1.25, cache_read: 0.2, cache_write: 0.0, output: 2.5 }),
     ("grok-4.20-0309-non-reasoning", Pricing { input: 1.25, cache_read: 0.2, cache_write: 0.0, output: 2.5 }),
