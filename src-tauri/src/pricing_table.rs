@@ -8,7 +8,7 @@
 use super::Pricing;
 
 /// 价格表的生成日期，透传给前端做"估算截至"标注。
-pub const PRICING_AS_OF: &str = "2026-09-28";
+pub const PRICING_AS_OF: &str = "2026-10-19";
 
 // 每行一个模型：rustfmt 会把它拆成每条六行（近千行），生成结果与格式化结果
 // 互相打架。这是生成文件，保持一行一条更好读也更好 diff。
@@ -19,6 +19,7 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("claude-fable-5-1", Pricing { input: 10.0, cache_read: 0.25, cache_write: 12.5, output: 50.0 }),
     ("claude-haiku-4-5", Pricing { input: 1.0, cache_read: 0.1, cache_write: 1.25, output: 5.0 }),
     ("claude-haiku-4-5-20251001", Pricing { input: 1.0, cache_read: 0.1, cache_write: 1.25, output: 5.0 }),
+    ("claude-haiku-5-5", Pricing { input: 0.1, cache_read: 0.01, cache_write: 0.125, output: 0.5 }),
     ("claude-mythos-5", Pricing { input: 10.0, cache_read: 1.0, cache_write: 12.5, output: 50.0 }),
     ("claude-mythos-5-1", Pricing { input: 10.0, cache_read: 0.25, cache_write: 12.5, output: 50.0 }),
     ("claude-mythos-preview", Pricing { input: 10.0, cache_read: 1.0, cache_write: 12.5, output: 50.0 }),
@@ -35,11 +36,14 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("claude-sonnet-4-5-20250929", Pricing { input: 3.0, cache_read: 0.3, cache_write: 3.75, output: 15.0 }),
     ("claude-sonnet-4-6", Pricing { input: 3.0, cache_read: 0.3, cache_write: 3.75, output: 15.0 }),
     ("claude-sonnet-5", Pricing { input: 2.0, cache_read: 0.2, cache_write: 2.5, output: 10.0 }),
+    ("claude-sonnet-5-5", Pricing { input: 2.0, cache_read: 0.1, cache_write: 2.5, output: 10.0 }),
     ("computer-use-preview", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 12.0 }),
+    ("computer-use-preview-2025-03-11", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 12.0 }),
     ("daybreak-blue-latest", Pricing { input: 4.0, cache_read: 0.4, cache_write: 5.0, output: 20.0 }),
     ("daybreak-red-latest", Pricing { input: 12.5, cache_read: 1.25, cache_write: 15.625, output: 75.0 }),
     ("deep-research-max-preview-04-2026", Pricing { input: 2.0, cache_read: 2.0, cache_write: 0.0, output: 12.0 }),
     ("deep-research-preview-04-2026", Pricing { input: 2.0, cache_read: 2.0, cache_write: 0.0, output: 12.0 }),
+    ("deep-research-pro-preview-12-2025", Pricing { input: 2.0, cache_read: 2.0, cache_write: 0.0, output: 12.0 }),
     ("ft:gpt-3.5-turbo", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 6.0 }),
     ("ft:gpt-3.5-turbo-0125", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 6.0 }),
     ("ft:gpt-3.5-turbo-0613", Pricing { input: 3.0, cache_read: 3.0, cache_write: 0.0, output: 6.0 }),
@@ -67,6 +71,7 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("gemini-3.6-flash", Pricing { input: 0.75, cache_read: 0.075, cache_write: 0.0, output: 3.75 }),
     ("gemini-3.7-flash", Pricing { input: 0.75, cache_read: 0.075, cache_write: 0.0, output: 3.75 }),
     ("gemini-3.8-flash", Pricing { input: 0.75, cache_read: 0.075, cache_write: 0.0, output: 3.75 }),
+    ("gemini-4-argon", Pricing { input: 2.0, cache_read: 0.1, cache_write: 0.0, output: 10.0 }),
     ("gemini-exp-1206", Pricing { input: 0.3, cache_read: 0.03, cache_write: 0.0, output: 2.5 }),
     ("gemini-flash-latest", Pricing { input: 0.75, cache_read: 0.075, cache_write: 0.0, output: 3.75 }),
     ("gemini-flash-lite-latest", Pricing { input: 0.3, cache_read: 0.03, cache_write: 0.0, output: 2.5 }),
@@ -116,7 +121,9 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("gpt-4o-mini-2024-07-18", Pricing { input: 0.15, cache_read: 0.075, cache_write: 0.0, output: 0.6 }),
     ("gpt-4o-mini-audio-preview-2024-12-17", Pricing { input: 0.15, cache_read: 0.15, cache_write: 0.0, output: 0.6 }),
     ("gpt-4o-mini-search-preview", Pricing { input: 0.15, cache_read: 0.075, cache_write: 0.0, output: 0.6 }),
+    ("gpt-4o-mini-search-preview-2025-03-11", Pricing { input: 0.15, cache_read: 0.075, cache_write: 0.0, output: 0.6 }),
     ("gpt-4o-search-preview", Pricing { input: 2.5, cache_read: 1.25, cache_write: 0.0, output: 10.0 }),
+    ("gpt-4o-search-preview-2025-03-11", Pricing { input: 2.5, cache_read: 1.25, cache_write: 0.0, output: 10.0 }),
     ("gpt-5", Pricing { input: 1.25, cache_read: 0.125, cache_write: 0.0, output: 10.0 }),
     ("gpt-5-2025-08-07", Pricing { input: 1.25, cache_read: 0.125, cache_write: 0.0, output: 10.0 }),
     ("gpt-5-chat", Pricing { input: 1.25, cache_read: 0.125, cache_write: 0.0, output: 10.0 }),
@@ -154,6 +161,7 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("gpt-5.4-pro-2026-03-05", Pricing { input: 30.0, cache_read: 30.0, cache_write: 0.0, output: 180.0 }),
     ("gpt-5.5", Pricing { input: 5.0, cache_read: 0.5, cache_write: 0.0, output: 30.0 }),
     ("gpt-5.5-2026-04-23", Pricing { input: 5.0, cache_read: 0.5, cache_write: 0.0, output: 30.0 }),
+    ("gpt-5.5-cyber-preview", Pricing { input: 12.5, cache_read: 1.25, cache_write: 0.0, output: 75.0 }),
     ("gpt-5.5-pro", Pricing { input: 30.0, cache_read: 30.0, cache_write: 0.0, output: 180.0 }),
     ("gpt-5.5-pro-2026-04-23", Pricing { input: 30.0, cache_read: 30.0, cache_write: 0.0, output: 180.0 }),
     ("gpt-5.6", Pricing { input: 4.0, cache_read: 0.4, cache_write: 5.0, output: 20.0 }),
@@ -164,13 +172,17 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("gpt-6-astra", Pricing { input: 10.0, cache_read: 1.0, cache_write: 12.5, output: 50.0 }),
     ("gpt-6-luna", Pricing { input: 0.1, cache_read: 0.01, cache_write: 0.125, output: 0.5 }),
     ("gpt-6-sol", Pricing { input: 2.0, cache_read: 0.2, cache_write: 2.5, output: 10.0 }),
+    ("gpt-6.1-sol", Pricing { input: 2.0, cache_read: 0.1, cache_write: 2.5, output: 10.0 }),
     ("gpt-audio", Pricing { input: 2.5, cache_read: 2.5, cache_write: 0.0, output: 10.0 }),
     ("gpt-audio-1.5", Pricing { input: 2.5, cache_read: 2.5, cache_write: 0.0, output: 10.0 }),
     ("gpt-audio-2025-08-28", Pricing { input: 2.5, cache_read: 2.5, cache_write: 0.0, output: 10.0 }),
     ("gpt-audio-mini", Pricing { input: 0.6, cache_read: 0.6, cache_write: 0.0, output: 2.4 }),
+    ("gpt-audio-mini-2025-10-06", Pricing { input: 0.6, cache_read: 0.6, cache_write: 0.0, output: 2.4 }),
     ("gpt-audio-mini-2025-12-15", Pricing { input: 0.6, cache_read: 0.6, cache_write: 0.0, output: 2.4 }),
     ("gpt-daybreak-blue-latest", Pricing { input: 4.0, cache_read: 0.4, cache_write: 5.0, output: 20.0 }),
     ("gpt-daybreak-red-latest", Pricing { input: 12.5, cache_read: 1.25, cache_write: 15.625, output: 75.0 }),
+    ("gpt-rosalind-discovery", Pricing { input: 5.0, cache_read: 0.5, cache_write: 0.0, output: 25.0 }),
+    ("gpt-rosalind-research", Pricing { input: 5.0, cache_read: 0.5, cache_write: 0.0, output: 25.0 }),
     ("grok-4.20", Pricing { input: 1.25, cache_read: 0.2, cache_write: 0.0, output: 2.5 }),
     ("grok-4.20-0309", Pricing { input: 1.25, cache_read: 0.2, cache_write: 0.0, output: 2.5 }),
     ("grok-4.20-0309-non-reasoning", Pricing { input: 1.25, cache_read: 0.2, cache_write: 0.0, output: 2.5 }),
@@ -232,6 +244,7 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("o3", Pricing { input: 2.0, cache_read: 0.5, cache_write: 0.0, output: 8.0 }),
     ("o3-2025-04-16", Pricing { input: 2.0, cache_read: 0.5, cache_write: 0.0, output: 8.0 }),
     ("o3-deep-research", Pricing { input: 10.0, cache_read: 2.5, cache_write: 0.0, output: 40.0 }),
+    ("o3-deep-research-2025-06-26", Pricing { input: 10.0, cache_read: 2.5, cache_write: 0.0, output: 40.0 }),
     ("o3-mini", Pricing { input: 1.1, cache_read: 0.55, cache_write: 0.0, output: 4.4 }),
     ("o3-mini-2025-01-31", Pricing { input: 1.1, cache_read: 0.55, cache_write: 0.0, output: 4.4 }),
     ("o3-pro", Pricing { input: 20.0, cache_read: 20.0, cache_write: 0.0, output: 80.0 }),
@@ -239,4 +252,5 @@ pub const PRICING_TABLE: &[(&str, Pricing)] = &[
     ("o4-mini", Pricing { input: 1.1, cache_read: 0.275, cache_write: 0.0, output: 4.4 }),
     ("o4-mini-2025-04-16", Pricing { input: 1.1, cache_read: 0.275, cache_write: 0.0, output: 4.4 }),
     ("o4-mini-deep-research", Pricing { input: 2.0, cache_read: 0.5, cache_write: 0.0, output: 8.0 }),
+    ("o4-mini-deep-research-2025-06-26", Pricing { input: 2.0, cache_read: 0.5, cache_write: 0.0, output: 8.0 }),
 ];
